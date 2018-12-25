@@ -33,18 +33,24 @@ def prepareDataThread( dataQueue, numpyImages, numpyGT, params):
             tempimage, tempGT = utilities.params['TestParams']produceRandomlyDeformedImage(tempimage, tempGT,
                                 self.params['ModelParams']['numcontrolpoints'],
                                             self.params['ModelParams']['sigma'])'''
-        image_height = tempimage.shape[0]
-        image_width = tempimage.shape[1]
-        image_depth = tempimage.shape[2]
-        starty = np.random.randint(
-            image_height - params['DataManagerParams']['VolSize'][0])
-        startx = np.random.randint(
-            image_width - params['DataManagerParams']['VolSize'][1])
-        startz = np.random.randint(image_depth - params['DataManagerParams']['VolSize'][2])
-        tempimage = tempimage[starty: starty + params['DataManagerParams']['VolSize'][
-            0], startx: startx + params['DataManagerParams']['VolSize'][1], startz: startz + params['DataManagerParams']['VolSize'][2]]
-        tempGT = tempGT[starty: starty + params['DataManagerParams']['VolSize'][
-            0], startx: startx + params['DataManagerParams']['VolSize'][1], startz: startz + params['DataManagerParams']['VolSize'][2]]
+        # image_height, image_width, image_depth = tempimage.shape
+        # starty = np.random.randint(image_height - params['DataManagerParams']['VolSize'][0])
+        # startx = np.random.randint(image_width - params['DataManagerParams']['VolSize'][1])
+        # startz = np.random.randint(image_depth - params['DataManagerParams']['VolSize'][2])
+        starty, startx, startz = [
+            np.random.randint(i - j) if i > j else 0
+            for i, j in zip(tempimage.shape, params['DataManagerParams']['VolSize'])
+            ]
+        tempimage = tempimage[
+            starty: starty + params['DataManagerParams']['VolSize'][0],
+            startx: startx + params['DataManagerParams']['VolSize'][1],
+            startz: startz + params['DataManagerParams']['VolSize'][2]
+            ]
+        tempGT = tempGT[
+            starty: starty + params['DataManagerParams']['VolSize'][0],
+            startx: startx + params['DataManagerParams']['VolSize'][1],
+            startz: startz + params['DataManagerParams']['VolSize'][2]
+            ]
 
         tempimage = tempimage.astype(dtype=np.float32)
         tempGT = tempGT.astype(dtype=np.float32)
@@ -81,15 +87,15 @@ if __name__ == '__main__':
 
     params['ModelParams']['device'] = 0 # the id of the GPU
     params['ModelParams']['snapshot'] = 0 #85000
-    params['ModelParams']['dirTrain'] = './training' # the directory of training data
+    params['ModelParams']['dirTrain'] = 'data/Lancunar/Lacunar_training/' # the directory of training data
     #params['ModelParams']['dirTest'] = '/home/ljp/from_Dfwang/WML/testing'
     # where we need to save the results (relative to the base path)
-    params['ModelParams']['dirResult'] = "./result" # the directory of the results of testing data
-    params['ModelParams']['dirValidation']='./validation/' #the directory of the validation data
-    params['ModelParams']['dirTest']='./testing/' #the directory of the testing data
+    params['ModelParams']['dirResult'] = "result/" # the directory of the results of testing data
+    params['ModelParams']['dirValidation']='data/Lancunar/Lacunar_validation/' #the directory of the validation data
+    params['ModelParams']['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
     # params['ModelParams']['dirResult']="/home/ftp/data/output/" #where we need to save the results (relative to the base path)
     # where to save the models while training
-    params['ModelParams']['dirSnapshots'] = "./snapshot/" # the directory of the model snapshots for training
+    params['ModelParams']['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
     params['ModelParams']['tailSnapshots'] = 'WL/vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
     params['ModelParams']['batchsize'] = 1  # the batch size
     params['ModelParams']['numIterations'] = 80000000  # the number of total training iterations
@@ -104,7 +110,6 @@ if __name__ == '__main__':
 
     # Ture: produce the probaility map in the testing phase, False: produce the  label image
     params['TestParams']['ProbabilityMap'] = False
-
     model = model.Model(params)
     train = [i for i, j in enumerate(sys.argv) if j == '-train']
     if len(train) > 0:
