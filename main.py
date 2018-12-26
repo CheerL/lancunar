@@ -114,8 +114,8 @@ if __name__ == '__main__':
     train = [i for i, j in enumerate(sys.argv) if j == '-train']
     if len(train) > 0:
         dataManagerTrain = DM.DataManager(params['ModelParams']['dirTrain'],
-                                               params['ModelParams']['dirResult'],
-                                               params['DataManagerParams'])
+                                          params['ModelParams']['dirResult'],
+                                          params['DataManagerParams'])
 
         dataManagerTrain.loadTrainingData()  # loads in sitk format
         howManyImages = len(dataManagerTrain.sitkImages)

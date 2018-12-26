@@ -231,10 +231,9 @@ class Model(object):
         nr_iter = self.params['ModelParams']['numIterations']
         batchsize = self.params['ModelParams']['batchsize']
 
-        batchData = np.zeros((batchsize, 1, self.params['DataManagerParams']['VolSize'][0], self.params['DataManagerParams']
-                              ['VolSize'][1], self.params['DataManagerParams']['VolSize'][2]), dtype=float)
-        batchLabel = np.zeros((batchsize, 1, self.params['DataManagerParams']['VolSize'][0],
-                               self.params['DataManagerParams']['VolSize'][1], self.params['DataManagerParams']['VolSize'][2]), dtype=float)
+        batchbasesize = (batchsize, 1) + tuple(self.params['DataManagerParams']['VolSize'])
+        batchData = np.zeros(batchbasesize, dtype=float)
+        batchLabel = np.zeros(batchbasesize, dtype=float)
 
         test_interval = self.params['ModelParams']['testInterval']
         train_interval = 50
@@ -379,8 +378,6 @@ class Model(object):
             model.apply(self.weights_init)
 
         #plt.ion()
-
-        
 
         self.trainThread(dataQueue, model)
 
