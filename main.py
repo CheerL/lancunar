@@ -51,9 +51,11 @@ def prepareDataThread( dataQueue, numpyImages, numpyGT, params):
             startx: startx + params['DataManagerParams']['VolSize'][1],
             startz: startz + params['DataManagerParams']['VolSize'][2]
             ]
-
-        tempimage = tempimage.astype(dtype=np.float32)
-        tempGT = tempGT.astype(dtype=np.float32)
+        padding_size = tuple(
+            (0, j - i) if j > i else (0, 0)
+            for i, j in zip(tempimage.shape, params['DataManagerParams']['VolSize']))
+        tempimage = np.pad(tempimage, padding_size, 'constant').astype(dtype=np.float32)
+        tempGT = np.pad(tempGT, padding_size, 'constant').astype(dtype=np.float32)
 
         # skip the image not containing the mircrobleed
         # if tempGT.sum()<1:

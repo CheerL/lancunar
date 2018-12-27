@@ -29,15 +29,7 @@ def load_labels():
             label).astype(dtype=float), [2, 0, 1])
         results_labels[folder] = (
             results_labels[folder] ).astype(dtype=np.uint8)
-        print results_labels[folder].shape
-
-
-
-
-
-
-
-
+        print(results_labels[folder].shape)
 
 
 def dilation(img):
@@ -78,7 +70,7 @@ def compute_metrix():
         GT_label = ground_truth_labels[label_name]
         result_label = results_labels[label_name]
         temp_dice = dice(GT_label, result_label)
-        print "label_name: " + str(label_name), " ", temp_dice
+        print("label_name: " + str(label_name), " ", temp_dice)
         dice_tot += temp_dice
     dice_avg = dice_tot / len(ground_truth_labels)
     return dice_avg
@@ -86,4 +78,4 @@ def compute_metrix():
 
 load_labels()
 dice_avg = compute_metrix()
-print "dice: ", dice_avg
+print("dice: ", dice_avg)

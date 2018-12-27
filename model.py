@@ -51,10 +51,10 @@ class Model(object):
         loss = 0.0
         accuracy = 0.0
         ResultImages = dict()
-        keysIMG = list(numpyImages.keys())
-        for i in range(len(keysIMG)):
-            (numpyResult, temploss) = self.produceSegmentationResult(
-                model, numpyImages[keysIMG[i]], numpyGTs[keysIMG[i]], calLoss=True)
+        for key in numpyImages:
+            numpyResult, temploss = self.produceSegmentationResult(
+                model, numpyImages[key], numpyGTs[key], calLoss=True
+                )
             loss += temploss
             LabelResult = numpyResult
 
@@ -62,11 +62,11 @@ class Model(object):
             cv2.waitKey(0)
             cv2.imshow('1',numpyGTs[keysIMG[i]][:,:,32])
             cv2.waitKey(0)'''
-            right = float(np.sum(LabelResult == numpyGTs[keysIMG[i]][:, :, :]))
+            right = float(np.sum(LabelResult == numpyGTs[key][:, :, :]))
             tot = float(LabelResult.shape[0] * LabelResult.shape[1] * LabelResult.shape[2])
             accuracy += right / tot
-            ResultImages[keysIMG[i]] = LabelResult
-        return (loss / len(keysIMG), accuracy / len(keysIMG))
+            ResultImages[key] = LabelResult
+        return (loss / len(numpyImages), accuracy / len(numpyImages))
 
     def getTestResultImage(self, model, numpyImage, numpyGT, returnProbability=False):
 
@@ -87,7 +87,7 @@ class Model(object):
         accuracy += right / tot
         # plot_3d(numpyGT, threshold = 0)
         # plot_3d(LabelResult, threshold=0)
-        ##print "loss: ", temploss , " acc: ", accuracy
+        print("loss: ", temploss , " acc: ", accuracy)
         return LabelResult
 
     def getTestResultImages(self, model, returnProbability=False):
@@ -97,10 +97,9 @@ class Model(object):
         loss = 0.0
         accuracy = 0.0
         ResultImages = dict()
-        keysIMG = numpyImages.keys()
-        for i in range(len(keysIMG)):
+        for key in numpyImages:
             (numpyResult, temploss) = self.produceSegmentationResult(
-                model, numpyImages[keysIMG[i]], numpyGTs[keysIMG[i]], calLoss=True, returnProbability=returnProbability)
+                model, numpyImages[key], numpyGTs[key], calLoss=True, returnProbability=returnProbability)
             loss += temploss
             if returnProbability:
                 LabelResult = numpyResult
@@ -110,37 +109,37 @@ class Model(object):
             cv2.waitKey(0)
             cv2.imshow('1',numpyGTs[keysIMG[i]][:,:,32])
             cv2.waitKey(0)'''
-            right = float(np.sum(LabelResult == numpyGTs[keysIMG[i]][:, :, :]))
+            right = float(np.sum(LabelResult == numpyGTs[key][:, :, :]))
             tot = float(LabelResult.shape[0] * LabelResult.shape[1] * LabelResult.shape[2])
             accuracy += right / tot
-            ResultImages[keysIMG[i]] = LabelResult
-       # #print "loss: ", loss / len(keysIMG), " acc: ", accuracy / len(keysIMG)
+            ResultImages[key] = LabelResult
+        print("loss: ", loss / len(numpyImages), " acc: ", accuracy / len(numpyImages))
         return ResultImages
 
     def produceSegmentationResult(self, model, numpyImage, numpyGT=0, calLoss=False, returnProbability=False):
         ''' produce the segmentation result, one time one image'''
         model.eval()
         numpyImage = np.copy(numpyImage)
-        tempresult = np.zeros(
-            (numpyImage.shape[0], numpyImage.shape[1], numpyImage.shape[2]), dtype=np.float32)
-        tempWeight = np.zeros(
-            (numpyImage.shape[0], numpyImage.shape[1], numpyImage.shape[2]), dtype=np.float32)
-        height = int(self.params['DataManagerParams']['VolSize'][0])
-        width = int(self.params['DataManagerParams']['VolSize'][1])
-        depth = int(self.params['DataManagerParams']['VolSize'][2])
+        padding_size = tuple((0, j - i % j) for i, j in zip(numpyImage.shape, self.params['DataManagerParams']['VolSize']))
+        numpyImage = np.pad(numpyImage, padding_size, 'constant')
+        numpyGT = np.pad(numpyGT, padding_size, 'constant')
+        tempresult = np.zeros(numpyImage.shape, dtype=np.float32)
+        tempWeight = np.zeros(numpyImage.shape, dtype=np.float32)
+        height, width, depth = self.params['DataManagerParams']['VolSize']
 
         batchData = np.zeros([1, 1, height, width, depth])
         batchLabel = np.zeros([1, 1, height, width, depth])
 
-        stride_height = int(self.params['DataManagerParams']['TestStride'][0])
-        stride_width = int(self.params['DataManagerParams']['TestStride'][1])
-        stride_depth = int(self.params['DataManagerParams']['TestStride'][2])
-        whole_height = int(numpyImage.shape[0])
-        whole_width = int(numpyImage.shape[1])
-        whole_depth = int(numpyImage.shape[2])
-        ynum = int(math.ceil((whole_height - height) / float(stride_height))) + 1
-        xnum = int(math.ceil((whole_width - width) / float(stride_width))) + 1
-        znum = int(math.ceil((whole_depth - depth) / float(stride_depth))) + 1
+        stride_height, stride_width, stride_depth = self.params['DataManagerParams']['TestStride']
+        whole_height, whole_width, whole_depth = numpyImage.shape
+        ynum, xnum, znum = [
+            int(math.ceil((x - y) / float(z))) + 1
+            for x, y, z in zip(
+                numpyImage.shape,
+                self.params['DataManagerParams']['VolSize'],
+                self.params['DataManagerParams']['TestStride']
+                )
+            ]
         loss = 0
         acc = 0
         tot = 0
@@ -165,10 +164,15 @@ class Model(object):
                         zend = zstart + depth
                     else:
                         zstart = whole_depth - depth
-                        zend = whole_depth
+                        if zstart < 0:
+                            zend = whole_depth - zstart
+                            zstart = 0
+                        else:
+                            zend = whole_depth
+
                     tot += 1
                     batchData[0, 0, :, :, :] = numpyImage[ystart:yend, xstart:xend, zstart:zend]
-                    if(calLoss):
+                    if calLoss:
                         batchLabel[0, 0, :, :, :] = numpyGT[ystart:yend, xstart:xend, zstart:zend]
                     else:
                         batchLabel[0, 0, :, :, :] = np.zeros(numpyImage[ystart:yend, xstart:xend, zstart:zend].shape)
@@ -192,9 +196,9 @@ class Model(object):
                     output = output.view(original_shape)
                     output = output.cpu()
 
-                    temploss = temploss.cpu().data[0]
+                    temploss = temploss.cpu().item()
                     loss = loss + temploss
-                    # #print temptrain_loss
+                    # print(temploss)
                     tempresult[ystart:yend, xstart:xend, zstart:zend] = tempresult[
                         ystart:yend, xstart:xend, zstart:zend] + output.numpy()
                     tempWeight[ystart:yend, xstart:xend, zstart:zend] = tempWeight[
@@ -244,11 +248,15 @@ class Model(object):
         tempaccuracy = 0
         temptrain_loss = 0
 
-        #print("build vnet")
+        print("build vnet")
 
         model.train()
         model.cuda()
-        optimizer = optim.Adam(model.parameters(), weight_decay=1e-8, lr=self.params['ModelParams']['baseLR'])
+        optimizer = optim.Adam(
+            model.parameters(),
+            weight_decay=1e-8,
+            lr=self.params['ModelParams']['baseLR']
+            )
 
         for origin_it in range(nr_iter):
             it = origin_it + 1
@@ -270,9 +278,9 @@ class Model(object):
             loss.backward()
             optimizer.step()
 
-            temploss = loss.cpu().data[0]
+            temploss = loss.cpu().item()
             temptrain_loss = temptrain_loss + temploss
-            # #print temptrain_loss
+            # print(temptrain_loss)
             pred = output.data.max(1)[1]  # get the index of the max log-probability
             incorrect = pred.ne(target.data).cpu().sum()
             tempaccuracy = tempaccuracy + 1.0 - float(incorrect) / target.numel()
@@ -281,7 +289,12 @@ class Model(object):
 
                 train_accuracy[it // train_interval] = tempaccuracy / (train_interval)
                 train_loss[it // train_interval] = temptrain_loss / (train_interval)
-                ##print time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), " training: iter: ", self.params['ModelParams']['snapshot'] + it, " loss: ", train_loss[it / train_interval], ' acc: ', train_accuracy[it / train_interval]
+                print(
+                    time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+                    " training: iter: ", self.params['ModelParams']['snapshot'] + it,
+                    " loss: ", train_loss[it / train_interval],
+                    ' acc: ', train_accuracy[it / train_interval]
+                )
                #plt.clf()
                # plt.subplot(2, 2, 1)
                 #plt.plot(range(1, it // train_interval), train_loss[1:it // train_interval])
@@ -299,8 +312,7 @@ class Model(object):
                 #plt.pause(0.00000001)
 
             if np.mod(it, test_interval) == 0:
-                (testloss[it // test_interval], testaccuracy[it // test_interval]
-                 ) = self.getValidationLossAndAccuracy(model)
+                testloss[it // test_interval], testaccuracy[it // test_interval] = self.getValidationLossAndAccuracy(model)
 
                 if testaccuracy[it // test_interval] >= self.max_accuracy:
                     self.max_accuracy = testaccuracy[it // test_interval]
@@ -309,7 +321,8 @@ class Model(object):
                     self.save_checkpoint({'iteration': self.params['ModelParams']['snapshot'] + it,
                                           'state_dict': model.state_dict(),
                                           'best_acc': True},
-                                         self.params['ModelParams']['dirSnapshots'], self.params['ModelParams']['tailSnapshots'])
+                                         self.params['ModelParams']['dirSnapshots'],
+                                         self.params['ModelParams']['tailSnapshots'])
 
                 if testloss[it // test_interval] <= self.min_loss:
                     self.min_loss = testloss[it // test_interval]
@@ -318,12 +331,13 @@ class Model(object):
                     self.save_checkpoint({'iteration': self.params['ModelParams']['snapshot'] + it,
                                           'state_dict': model.state_dict(),
                                           'best_acc': False},
-                                         self.params['ModelParams']['dirSnapshots'], self.params['ModelParams']['tailSnapshots'])
+                                         self.params['ModelParams']['dirSnapshots'],
+                                         self.params['ModelParams']['tailSnapshots'])
 
-                ##print time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                ##print "\ntesting: best_acc: " + str(self.best_iteration_acc) + " loss: " + str(self.min_accuracy_loss) + " accuracy: " + str(self.max_accuracy)
-                ##print "testing: best_loss: " + str(self.best_iteration_loss) + " loss: " + str(self.min_loss) + " accuracy: " + str(self.min_loss_accuracy)
-                ##print "testing: iteration: " + str(self.params['ModelParams']['snapshot'] + it) + " loss: " + str(testloss[it / test_interval]) + " accuracy: " + str(testaccuracy[it / test_interval]) + '\n'
+                print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
+                print("\ntesting: best_acc: " + str(self.best_iteration_acc) +" loss: " + str(self.min_accuracy_loss) + " accuracy: " + str(self.max_accuracy))
+                print("testing: best_loss: " + str(self.best_iteration_loss) + " loss: " + str(self.min_loss) + " accuracy: " + str(self.min_loss_accuracy))
+                print("testing: iteration: " + str(self.params['ModelParams']['snapshot'] + it) + " loss: " + str(testloss[it / test_interval]) + " accuracy: " + str(testaccuracy[it / test_interval]) + '\n')
                 #plt.clf()
                 #plt.subplot(2, 2, 1)
                 #plt.plot(range(1, it // 100), train_loss[1:it // 100])
@@ -360,20 +374,20 @@ class Model(object):
 
         assert howManyGT == howManyImages
 
-        ##print "The dataset has shape: data - " + str(howManyImages) + ". labels - " + str(howManyGT)
+        print("The dataset has shape: data - " + str(howManyImages) + ". labels - " + str(howManyGT))
 
         # create the network
         model = vnet.VNet(elu=False, nll=True)
 
         # train from scratch or continue from the snapshot
         if (self.params['ModelParams']['snapshot'] > 0):
-            ##print "=> loading checkpoint ", str(self.params['ModelParams']['snapshot'])
+            print("=> loading checkpoint ", str(self.params['ModelParams']['snapshot']))
             prefix_save = os.path.join(self.params['ModelParams']['dirSnapshots'],
                                        self.params['ModelParams']['tailSnapshots'])
             name = prefix_save + str(self.params['ModelParams']['snapshot']) + '_' + "checkpoint.pth.tar"
             checkpoint = torch.load(name)
             model.load_state_dict(checkpoint['state_dict'])
-            ##print "=> loaded checkpoint ", str(self.params['ModelParams']['snapshot'])
+            print("=> loaded checkpoint ", str(self.params['ModelParams']['snapshot']))
         else:
             model.apply(self.weights_init)
 
@@ -397,7 +411,7 @@ class Model(object):
         model.cuda()
 
         for f in tqdm(self.dataManagerTest.fileList):
-           # #print f
+            print(f)
             img, label = self.dataManagerTest.loadImgandLabel(f)
             result = self.getTestResultImage(model, img, label, self.params['TestParams']['ProbabilityMap'])
             self.dataManagerTest.writeResultsFromNumpyLabel(result,f)

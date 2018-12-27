@@ -13,7 +13,6 @@ scipy = "*"
 scikit-image = "==0.13.1"
 matplotlib = "==2.2.3"
 torchvision = "*"
-pylint = "<2.0.0"
 
 [dev-packages]
 pylint = "<2.0.0"

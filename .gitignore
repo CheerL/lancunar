@@ -1,6 +1,8 @@
 .git/**
 .vscode/**
+.ipynb_checkpoints/**
 data/**
 result/**
 snapshot/**
 *.pyc
+*.ipynb
