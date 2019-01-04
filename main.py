@@ -90,7 +90,6 @@ if __name__ == '__main__':
     params['ModelParams']['device'] = 0 # the id of the GPU
     params['ModelParams']['snapshot'] = 0 #85000
     params['ModelParams']['dirTrain'] = 'data/Lancunar/Lacunar_training/' # the directory of training data
-    #params['ModelParams']['dirTest'] = '/home/ljp/from_Dfwang/WML/testing'
     # where we need to save the results (relative to the base path)
     params['ModelParams']['dirResult'] = "result/" # the directory of the results of testing data
     params['ModelParams']['dirValidation']='data/Lancunar/Lacunar_validation/' #the directory of the validation data
@@ -99,11 +98,11 @@ if __name__ == '__main__':
     # where to save the models while training
     params['ModelParams']['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
     params['ModelParams']['tailSnapshots'] = 'WL/vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
-    params['ModelParams']['batchsize'] = 1  # the batch size
-    params['ModelParams']['numIterations'] = 80000000  # the number of total training iterations
+    params['ModelParams']['batchsize'] = 2  # the batch size
+    params['ModelParams']['numIterations'] = 20000  # the number of total training iterations
     params['ModelParams']['baseLR'] = 0.0003  # the learning rate, initial one
     params['ModelParams']['nProc'] = 5  # the number of threads to do data augmentation
-    params['ModelParams']['testInterval'] = 2000  # the number of training interations between testing
+    params['ModelParams']['testInterval'] = 100  # the number of training interations between testing
 
 
     # params of the DataManager

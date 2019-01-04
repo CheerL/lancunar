@@ -8,14 +8,14 @@ simpleitk = "*"
 numpy = "*"
 tqdm = "*"
 pathos = "*"
-torch = "*"
+torch = "==0.4.1"
 scipy = "*"
-scikit-image = "*"
-matplotlib = "*"
+scikit-image = "==0.13.1"
+matplotlib = "==2.2.3"
 torchvision = "*"
 
 [dev-packages]
-pylint = ">3.0.0"
+pylint = "<2.0.0"
 
 [requires]
-python_version = "3.6"
+python_version = "2.7"
