@@ -124,7 +124,7 @@ class Model(object):
                     if calLoss:
                         numpyGT = np.pad(numpyGT, padding_size, 'constant')
                         sliced_label = numpyGT[slice_index]
-                        batchLabel = sliced_label.reshape(1, 1, *sliced_label)
+                        batchLabel = sliced_label.reshape(1, 1, *sliced_label.shape)
                         target = torch.from_numpy(batchLabel).long()
                         target = Variable(target).cuda()
                         target = target.view(target.numel())
@@ -254,7 +254,7 @@ class Model(object):
         ''' initialize the model'''
         classname = m.__class__.__name__
         if classname.find('Conv3d') != -1:
-            nn.init.kaiming_normal(m.weight)
+            nn.init.kaiming_normal_(m.weight)
             m.bias.data.zero_()
 
     def train(self, dataManagerTrain, dataQueue):

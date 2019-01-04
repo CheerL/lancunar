@@ -102,7 +102,7 @@ if __name__ == '__main__':
     params['ModelParams']['numIterations'] = 20000  # the number of total training iterations
     params['ModelParams']['baseLR'] = 0.0003  # the learning rate, initial one
     params['ModelParams']['nProc'] = 5  # the number of threads to do data augmentation
-    params['ModelParams']['testInterval'] = 100  # the number of training interations between testing
+    params['ModelParams']['testInterval'] = 1000  # the number of training interations between testing
 
 
     # params of the DataManager
