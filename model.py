@@ -3,8 +3,6 @@ from __future__ import division
 
 import sys
 import numpy as np
-#import matplotlib.pyplot as plt
-#import matplotlib
 import os
 import DataManager as DM
 from os.path import splitext
@@ -29,10 +27,9 @@ import time
 from tqdm import tqdm
 import DataManagerNii as DMNII
 
-
+WEIGHT = torch.from_numpy(np.array([100, 200])).float().cuda()
 
 class Model(object):
-
     ''' the network model for training, validation and testing '''
     params = None
     dataManagerTrain = None
@@ -50,7 +47,8 @@ class Model(object):
 
     def predict(self, model, numpyImage, numpyGT):
         result, loss = self.produceSegmentationResult(model, numpyImage, numpyGT, calLoss=True)
-        accuracy = np.sum(result == numpyGT) / result.size
+        print(result.sum(), numpyGT.sum())
+        accuracy = np.mean(result == numpyGT)
         return result, accuracy, loss
 
     def getValidationLossAndAccuracy(self, model):
@@ -60,7 +58,7 @@ class Model(object):
         loss = 0.0
         accuracy = 0.0
         for key in numpyImages:
-            _, temp_loss, temp_acc = self.predict(model, numpyImages[key], numpyGTs[key])
+            _, temp_acc, temp_loss = self.predict(model, numpyImages[key], numpyGTs[key])
             loss += temp_loss
             accuracy += temp_acc
         return loss / len(numpyImages), accuracy / len(numpyImages)
@@ -78,7 +76,7 @@ class Model(object):
         loss = 0.0
         accuracy = 0.0
         for key in numpyImages:
-            temp_result, temp_loss, temp_acc = self.predict(model, numpyImages[key], numpyGTs[key])
+            temp_result, temp_acc, temp_loss = self.predict(model, numpyImages[key], numpyGTs[key])
             loss += temp_loss
             accuracy += temp_acc
             ResultImages[key] = temp_result
@@ -87,18 +85,21 @@ class Model(object):
 
     def produceSegmentationResult(self, model, numpyImage, numpyGT=0, calLoss=False):
         ''' produce the segmentation result, one time one image'''
-        model.eval()
+        # model.eval()
+        # model.cuda()
+        ori_shape = numpyImage.shape
         padding_size = tuple(
             (0, j - i % j if i % j else 0)
             for i, j in zip(numpyImage.shape, self.params['DataManagerParams']['VolSize'])
             )
         numpyImage = np.pad(numpyImage, padding_size, 'constant')
+        numpyGT = np.pad(numpyGT, padding_size, 'constant')
         tempresult = np.zeros(numpyImage.shape, dtype=np.float32)
         tempWeight = np.zeros(numpyImage.shape, dtype=np.float32)
         height, width, depth = self.params['DataManagerParams']['VolSize']
         stride_height, stride_width, stride_depth = self.params['DataManagerParams']['TestStride']
         whole_height, whole_width, whole_depth = numpyImage.shape
-        loss = 0
+        loss = list()
         # crop the image
         for ystart in range(0, whole_height, stride_height):
             for xstart in range(0, whole_width, stride_width):
@@ -116,22 +117,22 @@ class Model(object):
                     # as the network computating
                     data = Variable(data).cuda()
                     output = model(data)
-                    pred = output.data.max(1)[1].cpu()
+                    pred = output.max(2)[1]
 
-                    tempresult[slice_index] = tempresult[slice_index] + pred.numpy().reshape(*sliced_img.shape)
+                    tempresult[slice_index] = tempresult[slice_index] + pred.cpu().numpy().reshape(*sliced_img.shape)
                     tempWeight[slice_index] = tempWeight[slice_index] + 1
 
                     if calLoss:
-                        numpyGT = np.pad(numpyGT, padding_size, 'constant')
                         sliced_label = numpyGT[slice_index]
                         batchLabel = sliced_label.reshape(1, 1, *sliced_label.shape)
-                        target = torch.from_numpy(batchLabel).long()
+                        target = torch.from_numpy(batchLabel)
                         target = Variable(target).cuda()
-                        target = target.view(target.numel())
-                        temploss = F.nll_loss(output, target).cpu().item()
-                        loss += temploss
+                        target = target.view(1, -1)
+                        temploss = model.dice_loss(output, target).cpu().item()
+                        # print(F.nll_loss(output, target, reduction='none'))
+                        loss.append(temploss)
         tempresult = tempresult / tempWeight
-        return tempresult, loss
+        return tempresult[:ori_shape[0], :ori_shape[1], :ori_shape[2]], np.mean(loss)
 
     def create_temp_images(self, img, img_name):
         # create the 2D image based on the sitk image
@@ -189,28 +190,29 @@ class Model(object):
 
             data = torch.from_numpy(batchData).float()
             data = Variable(data).cuda()
-            target = torch.from_numpy(batchLabel).long()
+            target = torch.from_numpy(batchLabel)
             target = Variable(target).cuda()
-            target = target.view(target.numel())
+            target = target.view(batchsize, -1)
 
             optimizer.zero_grad()
             output = model(data)
-            pred = output.data.max(1)[1]  # get the index of the max log-probability
-            loss = F.nll_loss(output, target)
-            #loss = bioloss.dice_loss(output, target)
+            pred = output.max(2)[1]  # get the index of the max log-probability
+            loss = model.dice_loss(output, target)
+            # loss = F.nll_loss(output, target)
             loss.backward()
             optimizer.step()
 
             temptrain_loss += loss.cpu().item()
-            tempaccuracy += pred.eq(target.data).cpu().sum() / target.numel()
+            tempaccuracy += pred.eq(target.long()).float().mean().cpu().item()
 
             it = origin_it + 1
             if not it % train_interval:
-                train_report_it = it // train_interval
+                # print(output.size())
+                train_report_it = it // train_interval - 1
                 train_accuracy[train_report_it] = tempaccuracy / train_interval
                 train_loss[train_report_it] = temptrain_loss / train_interval
                 print(
-                    "{} training: iter: {} loss: {} acc: {}".format( 
+                    "{} training: iter: {} loss: {} acc: {}".format(
                         time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
                         self.params['ModelParams']['snapshot'] + it,
                         train_loss[train_report_it],
@@ -221,10 +223,10 @@ class Model(object):
                 temptrain_loss = 0.0
 
             if not it % test_interval:
-                test_report_it = it // test_interval
+                test_report_it = it // test_interval - 1
                 save_it = self.params['ModelParams']['snapshot'] + it
                 testloss[test_report_it], testaccuracy[test_report_it] = self.getValidationLossAndAccuracy(model)
-
+                print(testloss[test_report_it], testaccuracy[test_report_it])
                 if testaccuracy[test_report_it] > self.max_accuracy:
                     self.max_accuracy = testaccuracy[test_report_it]
                     self.max_accuracy_loss = testloss[test_report_it]
@@ -245,10 +247,9 @@ class Model(object):
                                          self.params['ModelParams']['dirSnapshots'],
                                          self.params['ModelParams']['tailSnapshots'])
 
-                print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-                print("testing: best_acc: {} loss: {} accuracy: {}".format(self.best_iteration_acc, self.min_accuracy_loss, self.max_accuracy))
-                print("testing: best_loss: {} loss: {} accuracy: {}".format(self.best_iteration_loss, self.min_loss, self.min_loss_accuracy))
-                print("testing: iteration: {} loss: {} accuracy: {}".format(save_it, testloss[test_report_it], testaccuracy[test_report_it]))
+                print("{} testing: iteration: {} loss: {} accuracy: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), save_it, testloss[test_report_it], testaccuracy[test_report_it]))
+                print("{} testing: best_acc: {} loss: {} accuracy: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy))
+                print("{} testing: best_loss: {} loss: {} accuracy: {}".format(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()), self.best_iteration_loss, self.min_loss, self.min_loss_accuracy))
 
     def weights_init(self, m):
         ''' initialize the model'''

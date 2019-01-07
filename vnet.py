@@ -87,10 +87,7 @@ class OutputTransition(nn.Module):
     def __init__(self, inChans, elu, nll):
         super(OutputTransition, self).__init__()
         self.conv1 = nn.Conv3d(inChans, 2, kernel_size=1, padding=0)
-        if nll:
-            self.softmax = F.log_softmax
-        else:
-            self.softmax = F.softmax
+        self.softmax = F.softmax
 
     def forward(self, x):
         # convolve 32 down to 2 channels
@@ -99,8 +96,8 @@ class OutputTransition(nn.Module):
         # make channels the last axis
         out = out.permute(0, 2, 3, 4, 1).contiguous()
         # flatten
-        out = out.view(out.numel() // 2, 2)
-        out = self.softmax(out, dim=1)
+        out = out.view(out.size(0), -1, 2)
+        out = self.softmax(out, dim=2)
         # treat channel 0 as the predicted output
         return out
 
@@ -127,3 +124,12 @@ class VNet(nn.Module):
 
         out = self.out_tr(out)
         return out
+
+    @staticmethod
+    def dice_loss(pred, target):
+        smooth = 0.001
+        pred_flat = pred[:, :, 1].view(pred.size(0), -1)
+        target = target.float()
+        intersection = pred_flat * target
+        loss = (2 * intersection.sum(1) + smooth) / (pred_flat.sum(1) + target.sum(1) + smooth)
+        return (1 - loss).mean()

@@ -4,7 +4,6 @@ from multiprocessing import Process, Queue
 
 if __name__ == '__main__':
     def prepareDataThread( dataQueue, numpyImages, numpyGT, params):
-        print ('55')
 
         dataQueue.put(5)
     numpyImages = np.zeros([5,5,5,5])
