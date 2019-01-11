@@ -211,7 +211,7 @@ class Model(object):
 
                 self.logger.info(
                     "testing: iteration: {} loss: {} accuracy: {}".format(
-                        snapshot + it, testloss[test_report_iter], testaccuracy[test_report_iter]
+                        snapshot + iteration, testloss[test_report_iter], testaccuracy[test_report_iter]
                     ))
 
     def weights_init(self, m):
