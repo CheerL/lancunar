@@ -86,7 +86,10 @@ class OutputTransition(nn.Module):
     def __init__(self, inChans, elu, nll):
         super(OutputTransition, self).__init__()
         self.conv1 = nn.Conv3d(inChans, 2, kernel_size=1, padding=0)
-        self.softmax = F.softmax
+        if nll:
+            self.softmax = F.log_softmax
+        else:
+            self.softmax = F.softmax
 
     def forward(self, x):
         # convolve 32 down to 2 channels
@@ -95,8 +98,8 @@ class OutputTransition(nn.Module):
         # make channels the last axis
         out = out.permute(0, 2, 3, 4, 1).contiguous()
         # flatten
-        out = out.view(out.size(0), -1, 2)
-        out = self.softmax(out, dim=2)
+        out = out.view(-1, 2)
+        out = self.softmax(out, dim=1)
         # treat channel 0 as the predicted output
         return out
 
@@ -104,7 +107,7 @@ class OutputTransition(nn.Module):
 class VNet(nn.Module):
     # the number of convolutions in each layer corresponds
     # to what is in the actual prototxt, not the intent
-    def __init__(self, elu=False, nll=True):
+    def __init__(self, elu=False, nll=False):
         super(VNet, self).__init__()
         self.in_tr = InputTransition(32, elu)
         self.down_tr64 = DownTransition(32, 64, 2, elu)
@@ -132,6 +135,12 @@ class VNet(nn.Module):
         intersection = pred_flat * target
         loss = (2 * intersection.sum(1) + smooth) / (pred_flat.pow(2).sum(1) + target.pow(2).sum(1) + smooth)
         return (1 - loss).mean()
+
+    @staticmethod
+    def nll_loss(pred, target):
+        # pred_flat = pred.view(-1, 2)
+        target = target.view(target.numel()).long()
+        return F.nll_loss(pred, target)
 
     @staticmethod
     def dice_similarity_coefficient(pred, target):

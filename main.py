@@ -51,29 +51,29 @@ if __name__ == '__main__':
     params['ModelParams']['device'] = 0 # the id of the GPU
     params['ModelParams']['snapshot'] = 0 #85000
     # params['ModelParams']['dirTrain'] = 'data/Lancunar/mini_train/' # the directory of training data
-    params['ModelParams']['dirTrain'] = '../CMB/training/' # the directory of training data
+    params['ModelParams']['dirTrain'] = '../CMB/mini_training/' # the directory of training data
     # where we need to save the results (relative to the base path)
     params['ModelParams']['dirResult'] = "result/" # the directory of the results of testing data
-    params['ModelParams']['dirValidation']='data/Lancunar/mini_val/' #the directory of the validation data
+    params['ModelParams']['dirValidation']='../CMB/mini_validation/' #the directory of the validation data
     # params['ModelParams']['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
-    params['ModelParams']['dirTest']='../CMB/validation/' #the directory of the testing data
+    params['ModelParams']['dirTest']='../CMB/mini_testing/' #the directory of the testing data
     # params['ModelParams']['dirResult']="/home/ftp/data/output/" #where we need to save the results (relative to the base path)
     # where to save the models while training
     params['ModelParams']['dirLog'] = "log/"
     params['ModelParams']['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
     params['ModelParams']['tailSnapshots'] = 'WL/mini_vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
-    params['ModelParams']['batchsize'] = 64  # the batch size
+    params['ModelParams']['batchsize'] = 4  # the batch size
     params['ModelParams']['epoch'] = 50000  # the number of total training iterations
     params['ModelParams']['baseLR'] = 1e-4  # the learning rate, initial one
     params['ModelParams']['weight_decay'] = 0.0005
     params['ModelParams']['nProc'] = 4  # the number of threads to do data augmentation
-    params['ModelParams']['testInterval'] = 1000  # the number of training interations between testing
-    params['ModelParams']['trainInterval'] = 50  # the number of training interations between testing
+    params['ModelParams']['testInterval'] = 500  # the number of training interations between testing
+    params['ModelParams']['trainInterval'] = 20  # the number of training interations between testing
 
     # params of the DataManager
-    params['DataManagerParams']['VolSize'] = np.asarray([64, 64, 8], dtype=int) # the size of the crop image
-    params['DataManagerParams']['TestStride'] = np.asarray([64, 64, 8], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
-    params['DataManagerParams']['TrainStride'] = np.asarray([32, 32, 4], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
+    params['DataManagerParams']['VolSize'] = np.asarray([64, 64, 20], dtype=int) # the size of the crop image
+    params['DataManagerParams']['TestStride'] = np.asarray([64, 64, 20], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
+    params['DataManagerParams']['TrainStride'] = np.asarray([32, 32, 10], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
 
     # Ture: produce the probaility map in the testing phase, False: produce the  label image
     params['TestParams']['ProbabilityMap'] = False
@@ -86,7 +86,7 @@ if __name__ == '__main__':
             params['DataManagerParams']
             )
         dataManagerTrain.loadData()  # loads in sitk format
-        dataQueue = Queue(50)  # max 50 images in queue
+        dataQueue = Queue(20)  # max 50 images in queue
         dataPreparation = [None] * params['ModelParams']['nProc']
 
         # thread creation

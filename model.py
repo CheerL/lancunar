@@ -9,7 +9,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import torch.optim as optim
-from torch.autograd import Variable
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
@@ -86,25 +85,24 @@ class Model(object):
                         slice(zstart, zstart + depth)
                         )
                     sliced_img = numpyImage[slice_index]
+                    sliced_label = numpyGT[slice_index]
                     batchData = sliced_img.reshape(1, 1, *sliced_img.shape)
-                    data = torch.from_numpy(batchData).float()
+                    batchLabel = sliced_label.reshape(1, 1, *sliced_label.shape)
+                    with torch.no_grad():
+                        data = torch.tensor(batchData).cuda().float()
+                        target = torch.tensor(batchLabel).cuda()
                     # volatile is used in the input variable for the inference,
                     # which indicates the network doesn't need the gradients, and this flag will transfer to other variable
                     # as the network computating
-                    data = Variable(data).cuda()
                     output = model(data)
-                    pred = output.max(2)[1]
+                    pred = output.max(1)[1]
 
                     tempresult[slice_index] = tempresult[slice_index] + pred.cpu().numpy().reshape(*sliced_img.shape)
                     tempWeight[slice_index] = tempWeight[slice_index] + 1
 
                     if calLoss:
-                        sliced_label = numpyGT[slice_index]
-                        batchLabel = sliced_label.reshape(1, 1, *sliced_label.shape)
-                        target = torch.from_numpy(batchLabel)
-                        target = Variable(target).cuda()
-                        target = target.view(1, -1)
-                        temploss = model.dice_loss(output, target).cpu().item()
+                        target = target.view(-1)
+                        temploss = model.nll_loss(output, target).cpu().item()
                         all_loss.append(temploss)
         
         result = (tempresult / tempWeight)[:ori_shape[0], :ori_shape[1], :ori_shape[2]]
@@ -124,7 +122,7 @@ class Model(object):
         '''train the network and plot the training curve'''
         nr_iter = self.params['ModelParams']['epoch'] * self.dataManagerTrain.num
         batchsize = self.params['ModelParams']['batchsize']
-
+        snapshot = self.params['ModelParams']['snapshot']
         batchbasesize = (batchsize, 1) + tuple(self.params['DataManagerParams']['VolSize'])
         batchData = np.zeros(batchbasesize, dtype=float)
         batchLabel = np.zeros(batchbasesize, dtype=float)
@@ -146,22 +144,20 @@ class Model(object):
             model.parameters(),
             weight_decay=self.params['ModelParams']['weight_decay'],
             lr=self.params['ModelParams']['baseLR']
-            )
+        )
 
-        for origin_it in range(nr_iter):
+        for iteration in range(1, nr_iter+1):
             for i in range(batchsize):
                 batchData[i, 0], batchLabel[i, 0] = dataQueue.get()
 
-            data = torch.from_numpy(batchData).float()
-            data = Variable(data).cuda()
-            target = torch.from_numpy(batchLabel)
-            target = Variable(target).cuda()
-            target = target.view(batchsize, -1)
+            data = torch.tensor(batchData).cuda().float()
+            target = torch.tensor(batchLabel).cuda()
+            target = target.view(-1)
 
             optimizer.zero_grad()
             output = model(data)
-            pred = output.max(2)[1]  # get the index of the max log-probability
-            loss = model.dice_loss(output, target)
+            pred = output.max(1)[1]  # get the index of the max log-probability
+            loss = model.nll_loss(output, target)
             # loss = F.nll_loss(output, target)
             loss.backward()
             optimizer.step()
@@ -169,55 +165,53 @@ class Model(object):
             temptrain_loss += loss.cpu().item()
             tempaccuracy += pred.eq(target.long()).float().mean().cpu().item()
 
-            it = origin_it + 1
-            if not it % train_interval:
-                train_report_it = it // train_interval - 1
-                train_accuracy[train_report_it] = tempaccuracy / train_interval
-                train_loss[train_report_it] = temptrain_loss / train_interval
+            if not iteration % train_interval:
+                train_report_iter = iteration // train_interval - 1
+                train_accuracy[train_report_iter] = tempaccuracy / train_interval
+                train_loss[train_report_iter] = temptrain_loss / train_interval
                 self.logger.info(
                     "training: iter: {} loss: {} acc: {}".format(
-                        self.params['ModelParams']['snapshot'] + it,
-                        train_loss[train_report_it],
-                        train_accuracy[train_report_it]
+                        snapshot + iteration,
+                        train_loss[train_report_iter],
+                        train_accuracy[train_report_iter]
                     ))
                 tempaccuracy = 0.0
                 temptrain_loss = 0.0
 
-            if not it % test_interval:
-                test_report_it = it // test_interval - 1
-                save_it = self.params['ModelParams']['snapshot'] + it
-                testloss[test_report_it], testaccuracy[test_report_it] = self.getValidationLossAndAccuracy(model)
-                if testaccuracy[test_report_it] > self.max_accuracy:
-                    self.max_accuracy = testaccuracy[test_report_it]
-                    self.max_accuracy_loss = testloss[test_report_it]
-                    self.best_iteration_acc = save_it
-                    self.save_checkpoint({'iteration': save_it,
+            if not iteration % test_interval:
+                test_report_iter = iteration // test_interval - 1
+                testloss[test_report_iter], testaccuracy[test_report_iter] = self.getValidationLossAndAccuracy(model)
+                if testaccuracy[test_report_iter] > self.max_accuracy:
+                    self.max_accuracy = testaccuracy[test_report_iter]
+                    self.max_accuracy_loss = testloss[test_report_iter]
+                    self.best_iteration_acc = snapshot + iteration
+                    self.save_checkpoint({'iteration': self.best_iteration_acc,
                                           'state_dict': model.state_dict(),
                                           'best_acc': True},
                                           self.params['ModelParams']['dirSnapshots'],
                                           self.params['ModelParams']['tailSnapshots'])
+                    self.logger.info(
+                        "testing: best_acc: {} loss: {} accuracy: {}".format(
+                            self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy
+                    ))
 
-                if testloss[test_report_it] < self.min_loss:
-                    self.min_loss = testloss[test_report_it]
-                    self.min_loss_accuracy = testaccuracy[test_report_it]
-                    self.best_iteration_loss = save_it
-                    self.save_checkpoint({'iteration': save_it,
+                if testloss[test_report_iter] < self.min_loss:
+                    self.min_loss = testloss[test_report_iter]
+                    self.min_loss_accuracy = testaccuracy[test_report_iter]
+                    self.best_iteration_loss = snapshot + iteration
+                    self.save_checkpoint({'iteration': self.best_iteration_loss,
                                           'state_dict': model.state_dict(),
                                           'best_acc': False},
                                           self.params['ModelParams']['dirSnapshots'],
                                           self.params['ModelParams']['tailSnapshots'])
+                    self.logger.info(
+                        "testing: best_loss: {} loss: {} accuracy: {}".format(
+                            self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
+                    ))
 
                 self.logger.info(
                     "testing: iteration: {} loss: {} accuracy: {}".format(
-                        save_it, testloss[test_report_it], testaccuracy[test_report_it]
-                    ))
-                self.logger.info(
-                    "testing: best_acc: {} loss: {} accuracy: {}".format(
-                        self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy
-                    ))
-                self.logger.info(
-                    "testing: best_loss: {} loss: {} accuracy: {}".format(
-                        self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
+                        snapshot + it, testloss[test_report_iter], testaccuracy[test_report_iter]
                     ))
 
     def weights_init(self, m):
@@ -241,7 +235,7 @@ class Model(object):
         image_num = gt_num = self.dataManagerTrain.num
         self.logger.info("The dataset has shape: data {}. labels: {}".format(image_num, gt_num))
         # create the network
-        model = Net()
+        model = Net(nll=True)
 
         # train from scratch or continue from the snapshot
         if self.params['ModelParams']['snapshot'] > 0:
