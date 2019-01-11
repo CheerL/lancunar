@@ -15,64 +15,60 @@ from pathos.multiprocessing import ProcessingPool as Pool
 
 
 class DataManagerNii(DataManager):
+    def __init__(self, srcFolder, resultsDir, parameters, probabilityMap=False):
+        self.num = 0
+        self.resacle_filter = sitk.RescaleIntensityImageFilter()
+        self.resacle_filter.SetOutputMaximum(1)
+        self.resacle_filter.SetOutputMinimum(0)
+        return super().__init__(srcFolder, resultsDir, parameters, probabilityMap=probabilityMap)
 
     def loadImages(self):
         self.sitkImages = dict()
-
-        for f in tqdm(self.fileList):
-            #self.sitkImages[f]=rescalFilt.Execute(sitk.Cast(sitk.ReadImage(join(join(self.srcFolder, f),'img.nii')),sitk.sitkFloat32))
-            self.sitkImages[f] = sitk.Cast(sitk.ReadImage(
-                join(join(self.srcFolder, f), 'img.nii')), sitk.sitkFloat32)
-            
-
+        for path in tqdm(self.fileList):
+            image_name = join(self.srcFolder, path, 'img.nii.gz')
+            self.sitkImages[path] = self.resacle_filter.Execute(
+                sitk.Cast(sitk.ReadImage(image_name), sitk.sitkFloat32)
+            )
 
     def loadGT(self):
-        self.sitkGT = dict()
-        for f in tqdm(self.gtList):
-            self.sitkGT[f] = sitk.Cast(sitk.ReadImage(
-                join(join(self.srcFolder, f), 'label.nii')), sitk.sitkFloat32)
-    
-    def loadTrainingData(self):
-        self.createImageFileList()
-        self.createGTFileList()
-        self.loadImages()
-        self.loadGT()
+        self.sitkGTs = dict()
+        for path in tqdm(self.gtList):
+            gt_name = join(self.srcFolder, path, 'label.nii.gz')
+            self.sitkGTs[path] = sitk.Cast(
+                sitk.ReadImage(gt_name), sitk.sitkFloat32
+            ) if isfile(gt_name) else None
 
-    def loadTestData(self):
+    def loadData(self):
         self.createImageFileList()
         self.createGTFileList()
         self.loadImages()
         self.loadGT()
         self.numpyImages = self.getNumpyImages()
+        self.numpyGTs = self.getNumpyGTs()
+        assert len(self.numpyImages) == len(self.numpyGTs)
+        self.padNumpyData()
+        self.num = len(self.numpyImages)
 
-        '''self.numpyGTs= copy.deepcopy(self.numpyImages)
-        for key in self.numpyGTs:
-            self.numpyGTs[key][...]=0'''
+    def getNumpyImages(self):
+        numpy_images = {
+            key: sitk.GetArrayFromImage(img).astype(dtype=np.float32).transpose([2, 1, 0])
+            for key, img in tqdm(self.sitkImages.items())
+        }
+        return numpy_images
 
-        self.numpyGTs = self.getNumpyGT()
-
-    def getNumpyData(self, dat, method):
-        ret = dict()
-        self.originalSizes = dict()
-        for key in tqdm(dat):
-            ret[key] = np.zeros([self.params['VolSize'][0], self.params['VolSize']
-                                 [1], self.params['VolSize'][2]], dtype=np.float32)
-
-            img = dat[key]
-            ret[key] = sitk.GetArrayFromImage(img).astype(dtype=float)
-            ret[key] = ret[key].astype(dtype=np.float32)
-            self.originalSizes[key]=ret[key].shape
-            #ret[key]=ret[key].astype(dtype=np.uint32)
-
-        return ret
+    def getNumpyGTs(self):
+        numpyGTs = {
+            key: (
+                sitk.GetArrayFromImage(img).astype(dtype=np.float32).transpose([2, 1, 0])
+                if img is not None else np.zeros(self.sitkImages[key].GetSize(), dtype=np.float32)
+            ) for key, img in tqdm(self.sitkGTs.items())
+        }
+        return numpyGTs
 
     def writeResultsFromNumpyLabel(self, result, key,original_image=False):
         if self.probabilityMap:
             result = result * 255
-        else:
-            pass
-            # result = result>0.5
-            # result = result.astype(np.uint8)
+
         result = np.transpose(result, [2, 1, 0])
         toWrite = sitk.GetImageFromArray(result)
 
@@ -83,23 +79,29 @@ class DataManagerNii(DataManager):
 
         writer = sitk.ImageFileWriter()
         filename, ext = splitext(key)
-        # print join(self.resultsDir, filename + '_result' + ext)
         writer.SetFileName(join(self.resultsDir, filename + '_result.nii.gz'))
         writer.Execute(toWrite)
 
+    def padNumpyData(self):
+        for key in self.numpyImages:
+            image = self.numpyImages[key]
+            gt = self.numpyGTs[key]
+
+            padding = [max(j - i, 0) for i, j in zip(image.shape, self.params['VolSize'])]
+            if any(padding):
+                padding_size = tuple((0, pad) for pad in padding)
+                self.numpyImages[key] = np.pad(image, padding_size, 'constant').astype(dtype=np.float32)
+                self.numpyGTs[key] = np.pad(gt, padding_size, 'constant').astype(dtype=np.float32)
+
+
 class DataManagerNiiLazyLoad(DataManagerNii):
-    def loadTestData(self):
+    def loadData(self):
         self.createImageFileList()
         #self.createGTFileList()
-    
+
     def loadImgandLabel(self, f):
-        img = sitk.Cast(sitk.ReadImage(
-                join(join(self.srcFolder, f), 'img.nii.gz')), sitk.sitkFloat32)
+        img = sitk.Cast(sitk.ReadImage(join(self.srcFolder, f, 'img.nii.gz')), sitk.sitkFloat32)
         img = sitk.GetArrayFromImage(img).astype(dtype=np.float32)
         img = np.transpose(img, [2, 1, 0])
-
         label = np.zeros(img.shape)
-
-
         return img, label
-    

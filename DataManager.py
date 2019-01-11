@@ -40,7 +40,6 @@ class DataManager(object):
                     self.fileList.append(f)
                     break
 
-        #print 'FILE LIST: ' + str(self.fileList)
 
     def createGTFileList(self):
         '''find all directories containing labels and put there name in the fileList'''
@@ -120,9 +119,7 @@ class DataManager(object):
         return dat
 
     def getNumpyGT(self):
-
         dat = self.getNumpyData(self.sitkGT, sitk.sitkLinear)
-
         return dat
 
     def getNumpyData(self, dat, method):
@@ -144,7 +141,6 @@ class DataManager(object):
             ret[key]=ret[key].astype(dtype=np.uint32)
             #ret[key] = skimage.transform.resize(ret[key],self.params['WholeSize'],order=3, mode='reflect', preserve_range=True)
             ret[key]=ret[key].astype(dtype=np.float32)
-            ##print ret[key].shape
             '''cv2.imshow("",ret[key][:,:,60])
             #cv2.waitKey(0)'''
 
@@ -169,6 +165,5 @@ class DataManager(object):
 
         writer = sitk.ImageFileWriter()
         filename, ext = splitext(key)
-        # #print join(self.resultsDir, filename + '_result' + ext)
         writer.SetFileName(join(self.resultsDir, filename + '_result.nii'))
         writer.Execute(toWrite)

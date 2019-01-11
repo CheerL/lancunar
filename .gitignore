@@ -1,8 +1,10 @@
 .git/**
 .vscode/**
 .ipynb_checkpoints/**
+__pycache__/**
 data/**
 result/**
 snapshot/**
+log/**
 *.pyc
 *.ipynb

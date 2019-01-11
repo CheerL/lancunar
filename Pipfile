@@ -1,5 +1,5 @@
 [[source]]
-url = "https://pypi.mirrors.ustc.edu.cn/simple/"
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 verify_ssl = true
 name = "pypi"
 
@@ -8,14 +8,15 @@ simpleitk = "*"
 numpy = "*"
 tqdm = "*"
 pathos = "*"
-torch = "*"
 scipy = "*"
 scikit-image = "*"
 matplotlib = "*"
+torch_win = {file = "https://download.pytorch.org/whl/cu90/torch-1.0.0-cp36-cp36m-win_amd64.whl", sys_platform = "== 'win32'"}
+torch = {version = "*", sys_platform = "== 'linux'"}
 torchvision = "*"
 
 [dev-packages]
-pylint = ">3.0.0"
+pylint = "*"
 
 [requires]
 python_version = "3.6"

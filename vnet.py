@@ -75,7 +75,6 @@ class UpTransition(nn.Module):
         self.ops2 = _make_nConv(outChans, outChans, nConvs-1, elu)
 
     def forward(self, x, skipx):
-
         out = self.relu1(self.bn1(self.up_conv(x)))
         xcat = torch.cat((out, skipx), 1)
         out = self.ops1(xcat)
@@ -87,10 +86,7 @@ class OutputTransition(nn.Module):
     def __init__(self, inChans, elu, nll):
         super(OutputTransition, self).__init__()
         self.conv1 = nn.Conv3d(inChans, 2, kernel_size=1, padding=0)
-        if nll:
-            self.softmax = F.log_softmax
-        else:
-            self.softmax = F.softmax
+        self.softmax = F.softmax
 
     def forward(self, x):
         # convolve 32 down to 2 channels
@@ -99,8 +95,8 @@ class OutputTransition(nn.Module):
         # make channels the last axis
         out = out.permute(0, 2, 3, 4, 1).contiguous()
         # flatten
-        out = out.view(out.numel() // 2, 2)
-        out = self.softmax(out, dim=1)
+        out = out.view(out.size(0), -1, 2)
+        out = self.softmax(out, dim=2)
         # treat channel 0 as the predicted output
         return out
 
@@ -108,7 +104,7 @@ class OutputTransition(nn.Module):
 class VNet(nn.Module):
     # the number of convolutions in each layer corresponds
     # to what is in the actual prototxt, not the intent
-    def __init__(self, elu=True, nll=True):
+    def __init__(self, elu=False, nll=True):
         super(VNet, self).__init__()
         self.in_tr = InputTransition(32, elu)
         self.down_tr64 = DownTransition(32, 64, 2, elu)
@@ -127,3 +123,20 @@ class VNet(nn.Module):
 
         out = self.out_tr(out)
         return out
+
+    @staticmethod
+    def dice_loss(pred, target):
+        smooth = 0.001
+        pred_flat = pred[:, :, 1].view(pred.size(0), -1)
+        target = target.float()
+        intersection = pred_flat * target
+        loss = (2 * intersection.sum(1) + smooth) / (pred_flat.pow(2).sum(1) + target.pow(2).sum(1) + smooth)
+        return (1 - loss).mean()
+
+    @staticmethod
+    def dice_similarity_coefficient(pred, target):
+        pass
+
+    @staticmethod
+    def sensitivity(pred, target):
+        pass
