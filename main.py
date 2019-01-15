@@ -6,41 +6,6 @@ import DataManagerNii as DMNII
 from multiprocessing import Process, Queue
 
 
-def prepareDataThread(proc, dataQueue, numpyImages, numpyGTs, params):
-    ''' the thread worker to prepare the training data'''
-    num_image = len(numpyImages)
-    num_epoch = params['ModelParams']['epoch']
-    batchsize = params['ModelParams']['batchsize']
-
-    for num in range(proc, num_image * num_epoch, params['ModelParams']['nProc']):
-        key = list(numpyImages.keys())[num % num_image]
-        image = numpyImages[key].copy()
-        gt = numpyGTs[key].copy()
-
-        height, width, depth = params['DataManagerParams']['VolSize']
-        stride_height, stride_width, stride_depth = params['DataManagerParams']['TrainStride']
-        whole_height, whole_width, whole_depth = image.shape
-
-        for ystart in list(range(0, whole_height-height, stride_height)) + [whole_height-height]:
-            for xstart in list(range(0, whole_width-width, stride_width)) + [whole_width-width]:
-                for zstart in list(range(0, whole_depth-depth, stride_depth)) + [whole_depth-depth]:
-                    slice_index = (
-                        slice(ystart, ystart + height),
-                        slice(xstart, xstart + width),
-                        slice(zstart, zstart + depth)
-                    )
-                    tempimage = image[slice_index]
-                    tempGT = gt[slice_index]
-
-                    # skip the image not containing the mircrobleed
-                    # if tempGT.sum()<1:
-                    #    continue
-                    randomi = np.random.randint(4)
-                    tempimage = np.rot90(tempimage, randomi)
-                    tempGT = np.rot90(tempGT, randomi)
-                    dataQueue.put((tempimage, tempGT))
-
-
 if __name__ == '__main__':
     basePath = os.getcwd() # get current path
     params = dict() # all parameters
@@ -51,29 +16,33 @@ if __name__ == '__main__':
     params['ModelParams']['device'] = 0 # the id of the GPU
     params['ModelParams']['snapshot'] = 0 #85000
     # params['ModelParams']['dirTrain'] = 'data/Lancunar/mini_train/' # the directory of training data
-    params['ModelParams']['dirTrain'] = '../CMB/mini_training/' # the directory of training data
-    # where we need to save the results (relative to the base path)
-    params['ModelParams']['dirResult'] = "result/" # the directory of the results of testing data
-    params['ModelParams']['dirValidation']='../CMB/mini_validation/' #the directory of the validation data
     # params['ModelParams']['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
-    params['ModelParams']['dirTest']='../CMB/mini_testing/' #the directory of the testing data
     # params['ModelParams']['dirResult']="/home/ftp/data/output/" #where we need to save the results (relative to the base path)
+    params['ModelParams']['dirTrain'] = '../CMB/mini_training/' # the directory of training data
+    params['ModelParams']['dirValidation']='../CMB/mini_validation/' #the directory of the validation data
+    params['ModelParams']['dirTest']='../CMB/mini_testing/' #the directory of the testing data
+    params['ModelParams']['dirResult'] = "result/" # the directory of the results of testing data
     # where to save the models while training
     params['ModelParams']['dirLog'] = "log/"
     params['ModelParams']['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
     params['ModelParams']['tailSnapshots'] = 'WL/mini_vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
-    params['ModelParams']['batchsize'] = 4  # the batch size
-    params['ModelParams']['epoch'] = 50000  # the number of total training iterations
-    params['ModelParams']['baseLR'] = 1e-4  # the learning rate, initial one
+    params['ModelParams']['batchsize'] = 1  # the batch size
+    params['ModelParams']['iteration'] = 1000000
+    params['ModelParams']['baseLR'] = 5e-4  # the learning rate, initial one
     params['ModelParams']['weight_decay'] = 0.0005
-    params['ModelParams']['nProc'] = 4  # the number of threads to do data augmentation
-    params['ModelParams']['testInterval'] = 500  # the number of training interations between testing
+
+    params['ModelParams']['valInterval'] = 500  # the number of training interations between testing
     params['ModelParams']['trainInterval'] = 20  # the number of training interations between testing
 
     # params of the DataManager
-    params['DataManagerParams']['VolSize'] = np.asarray([64, 64, 20], dtype=int) # the size of the crop image
-    params['DataManagerParams']['TestStride'] = np.asarray([64, 64, 20], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
-    params['DataManagerParams']['TrainStride'] = np.asarray([32, 32, 10], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
+    params['DataManagerParams']['epoch'] = 5000  # the number of total training iterations
+    params['DataManagerParams']['nProc'] = 4  # the number of threads to do data augmentation
+    params['DataManagerParams']['VolSize'] = np.asarray([64, 64, 16], dtype=int) # the size of the crop image
+    params['DataManagerParams']['TestStride'] = np.asarray([64, 64, 16], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
+    params['DataManagerParams']['TrainStride'] = np.asarray([32, 32, 8], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
+    params['DataManagerParams']['MaxEmpty'] = 2
+    params['DataManagerParams']['dataQueueSize'] = 200
+    params['DataManagerParams']['posQueueSize'] = 1000
 
     # Ture: produce the probaility map in the testing phase, False: produce the  label image
     params['TestParams']['ProbabilityMap'] = False
@@ -85,19 +54,10 @@ if __name__ == '__main__':
             params['ModelParams']['dirResult'],
             params['DataManagerParams']
             )
-        dataManagerTrain.loadData()  # loads in sitk format
-        dataQueue = Queue(20)  # max 50 images in queue
-        dataPreparation = [None] * params['ModelParams']['nProc']
-
+        dataManagerTrain.load_data()  # loads in sitk format
+        dataManagerTrain.run_train_processes()
         # thread creation
-        for proc in range(0, params['ModelParams']['nProc']):
-            dataPreparation[proc] = Process(
-                target=prepareDataThread,
-                args=(proc, dataQueue, dataManagerTrain.numpyImages, dataManagerTrain.numpyGTs, params)
-            )
-            dataPreparation[proc].daemon = True
-            dataPreparation[proc].start()
-        model.train(dataManagerTrain, dataQueue) #train model
+        model.train(dataManagerTrain) #train model
 
     test = [i for i, j in enumerate(sys.argv) if j == '-test']
     for i in sys.argv:

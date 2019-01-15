@@ -1,107 +1,138 @@
-import copy
-import math
 import os
-from os import listdir
-from os.path import isfile, join, splitext
 
 #import cv2
 import numpy as np
+import threadpool
 import SimpleITK as sitk
-import skimage.transform
-from DataManager import DataManager
+
+
+
 from tqdm import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
+from multiprocessing import Queue, Process
+from itertools import product
 
 
 
-class DataManagerNii(DataManager):
-    def __init__(self, srcFolder, resultsDir, parameters, probabilityMap=False):
-        self.num = 0
-        self.resacle_filter = sitk.RescaleIntensityImageFilter()
-        self.resacle_filter.SetOutputMaximum(1)
-        self.resacle_filter.SetOutputMinimum(0)
-        return super().__init__(srcFolder, resultsDir, parameters, probabilityMap=probabilityMap)
+class DataManagerNii:
+    def __init__(self, src_dir, result_dir, params):
+        self.params = params
+        self.src_dir = src_dir
+        self.result_dir = result_dir
 
-    def loadImages(self):
-        self.sitkImages = dict()
-        for path in tqdm(self.fileList):
-            image_name = join(self.srcFolder, path, 'img.nii.gz')
-            self.sitkImages[path] = self.resacle_filter.Execute(
-                sitk.Cast(sitk.ReadImage(image_name), sitk.sitkFloat32)
+        self.data_list = list()
+        self.numpy_images = dict()
+        self.numpy_gts = dict()
+        self.numpy_image_type = np.float32
+        self.numpy_gt_type = np.int32
+        self.data_queue = None
+        self.pos_queue = None
+
+
+    def create_data_list(self):
+        self.data_list = [
+            path for path in os.listdir(self.src_dir)
+            if 'img.nii.gz' in os.listdir(os.path.join(self.src_dir, path))
+        ]
+
+    def load_data(self):
+        self.create_data_list()
+        self.run_load_thread()
+        # for data in self.data_list:
+        #     self.load_numpy_data(data)
+
+    def run_train_processes(self):
+        def data_shuffle_process(pos_queue):
+            height, width, depth = self.params['VolSize']
+            stride_height, stride_width, stride_depth = self.params['TrainStride']
+
+            pos_list = list()
+            for key, image in self.numpy_images.items():
+                whole_height, whole_width, whole_depth = image.shape
+                for ystart, xstart, zstart in product(
+                    range(0, whole_height-height, stride_height),
+                    range(0, whole_width-width, stride_width),
+                    range(0, whole_depth-depth, stride_depth)
+                ):
+                    pos_list.append((key, ystart, xstart, zstart))
+
+            for _ in range(self.params['epoch']):
+                np.random.shuffle(pos_list)
+                for each in pos_list:
+                    pos_queue.put(each)
+
+        def data_load_process(pos_queue, data_queue):
+            ''' the thread worker to prepare the training data'''
+            empty = 0
+            height, width, depth = self.params['VolSize']
+
+            while True:
+                each = pos_queue.get()
+                key, ystart, xstart, zstart = each
+                slice_index = (
+                    slice(ystart, ystart + height),
+                    slice(xstart, xstart + width),
+                    slice(zstart, zstart + depth)
+                )
+                image = self.numpy_images[key][slice_index]
+                gt = self.numpy_gts[key][slice_index]
+
+                if gt.any():
+                    empty = 0
+                elif empty < self.params['MaxEmpty']:
+                    empty += 1
+                else:
+                    continue
+                if gt.min() < 0:
+                    print(each, gt.min())
+                randomi = np.random.randint(4)
+                image = np.rot90(image.copy(), randomi)
+                gt = np.rot90(gt.copy(), randomi)
+
+                data_queue.put((image, gt))
+
+        self.data_queue = Queue(self.params['dataQueueSize'])
+        self.pos_queue = Queue(self.params['posQueueSize'])
+        shuffle_process = Process(
+            target=data_shuffle_process,
+            args=(self.pos_queue,),
+            daemon=True
+        )
+        shuffle_process.start()
+
+        for _ in range(self.params['nProc']):
+            load_process = Process(
+                target=data_load_process,
+                args=(self.pos_queue, self.data_queue),
+                daemon=True
             )
+            load_process.start()
 
-    def loadGT(self):
-        self.sitkGTs = dict()
-        for path in tqdm(self.gtList):
-            gt_name = join(self.srcFolder, path, 'label.nii.gz')
-            self.sitkGTs[path] = sitk.Cast(
-                sitk.ReadImage(gt_name), sitk.sitkFloat32
-            ) if isfile(gt_name) else None
+    def run_load_thread(self):
+        pool = threadpool.ThreadPool(64)
+        reqs = threadpool.makeRequests(self.load_numpy_data, [(data) for data in self.data_list])
+        for req in reqs:
+            pool.putRequest(req)
+        pool.wait()
 
-    def loadData(self):
-        self.createImageFileList()
-        self.createGTFileList()
-        self.loadImages()
-        self.loadGT()
-        self.numpyImages = self.getNumpyImages()
-        self.numpyGTs = self.getNumpyGTs()
-        assert len(self.numpyImages) == len(self.numpyGTs)
-        self.padNumpyData()
-        self.num = len(self.numpyImages)
-
-    def getNumpyImages(self):
-        numpy_images = {
-            key: sitk.GetArrayFromImage(img).astype(dtype=np.float32).transpose([2, 1, 0])
-            for key, img in tqdm(self.sitkImages.items())
-        }
-        return numpy_images
-
-    def getNumpyGTs(self):
-        numpyGTs = {
-            key: (
-                sitk.GetArrayFromImage(img).astype(dtype=np.float32).transpose([2, 1, 0])
-                if img is not None else np.zeros(self.sitkImages[key].GetSize(), dtype=np.float32)
-            ) for key, img in tqdm(self.sitkGTs.items())
-        }
-        return numpyGTs
-
-    def writeResultsFromNumpyLabel(self, result, key,original_image=False):
-        if self.probabilityMap:
-            result = result * 255
-
-        result = np.transpose(result, [2, 1, 0])
-        toWrite = sitk.GetImageFromArray(result)
-
-        if original_image:
-            toWrite = sitk.Cast(toWrite, sitk.sitkFloat32)
-        else:
-            toWrite = sitk.Cast(toWrite, sitk.sitkUInt8)
-
+    def write_result(self, result, name):
+        result = result.transpose([2, 1, 0])
+        result = sitk.GetImageFromArray(result, sitk.sitkUInt8)
         writer = sitk.ImageFileWriter()
-        filename, ext = splitext(key)
-        writer.SetFileName(join(self.resultsDir, filename + '_result.nii.gz'))
-        writer.Execute(toWrite)
+        filename, _ = os.path.splitext(name)
+        writer.SetFileName(os.path.join(self.result_dir, filename + '_result.nii.gz'))
+        writer.Execute(result)
 
-    def padNumpyData(self):
-        for key in self.numpyImages:
-            image = self.numpyImages[key]
-            gt = self.numpyGTs[key]
-
-            padding = [max(j - i, 0) for i, j in zip(image.shape, self.params['VolSize'])]
-            if any(padding):
-                padding_size = tuple((0, pad) for pad in padding)
-                self.numpyImages[key] = np.pad(image, padding_size, 'constant').astype(dtype=np.float32)
-                self.numpyGTs[key] = np.pad(gt, padding_size, 'constant').astype(dtype=np.float32)
-
-
-class DataManagerNiiLazyLoad(DataManagerNii):
-    def loadData(self):
-        self.createImageFileList()
-        #self.createGTFileList()
-
-    def loadImgandLabel(self, f):
-        img = sitk.Cast(sitk.ReadImage(join(self.srcFolder, f, 'img.nii.gz')), sitk.sitkFloat32)
-        img = sitk.GetArrayFromImage(img).astype(dtype=np.float32)
-        img = np.transpose(img, [2, 1, 0])
-        label = np.zeros(img.shape)
-        return img, label
+    def load_numpy_data(self, data):
+        image_name = os.path.join(self.src_dir, data, 'img.nii.gz')
+        gt_name = os.path.join(self.src_dir, data, 'label.nii.gz')
+        image = sitk.GetArrayFromImage(sitk.ReadImage(image_name)).transpose([2, 1, 0]).astype(self.numpy_image_type)
+        image = image / image.max()
+        if os.path.isfile(gt_name):
+            gt = sitk.GetArrayFromImage(sitk.ReadImage(gt_name)).transpose([2, 1, 0]).astype(self.numpy_gt_type)
+        else:
+            gt = np.zeros(image.shape, self.numpy_gt_type)
+        if gt.min() < 0:
+            print(data, gt.min())
+        self.numpy_images[data] = image
+        self.numpy_gts[data] = image

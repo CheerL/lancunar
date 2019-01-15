@@ -15,6 +15,7 @@ from tqdm import tqdm
 import DataManagerNii as DMNII
 from vnet import VNet as Net
 from logger import Logger
+from itertools import product
 
 class Model(object):
     ''' the network model for training, validation and testing '''
@@ -34,81 +35,81 @@ class Model(object):
 
     def getValidationLossAndAccuracy(self, model):
         '''get the segmentation loss and accuracy of the validation data '''
-        numpyImages = self.dataManagerValidation.numpyImages
-        numpyGTs = self.dataManagerValidation.numpyGTs
+        numpy_images = self.dataManagerValidation.numpy_images
+        numpy_gts = self.dataManagerValidation.numpy_gts
         loss = 0.0
         accuracy = 0.0
-        for key in numpyImages:
-            _, temp_loss, temp_acc = self.produceSegmentationResult(model, numpyImages[key], numpyGTs[key])
+        for key in numpy_images:
+            _, temp_loss, temp_acc = self.produceSegmentationResult(model, numpy_images[key], numpy_gts[key])
             loss += temp_loss
             accuracy += temp_acc
-        return loss / len(numpyImages), accuracy / len(numpyImages)
+        return loss / len(numpy_images), accuracy / len(numpy_images)
 
-    def getTestResultImage(self, model, numpyImage, numpyGT):
-        result, loss, accuracy  = self.produceSegmentationResult(model, numpyImage, numpyGT)
+    def getTestResultImage(self, model, numpy_image, numpy_gt):
+        result, loss, accuracy  = self.produceSegmentationResult(model, numpy_image, numpy_gt)
         self.logger.info("loss: {} acc: {}".format(loss, accuracy))
         return result
 
     def getTestResultImages(self, model):
         ''' return the segmentation results of the testing data'''
-        numpyImages = self.dataManagerTest.numpyImages
-        numpyGTs = self.dataManagerTest.numpyGTs
+        numpy_images = self.dataManagerTest.numpy_images
+        numpy_gts = self.dataManagerTest.numpy_gts
         ResultImages = dict()
         loss = 0.0
         accuracy = 0.0
-        for key in numpyImages:
-            temp_result, temp_loss, temp_acc = self.produceSegmentationResult(model, numpyImages[key], numpyGTs[key])
+        for key in numpy_images:
+            temp_result, temp_loss, temp_acc = self.produceSegmentationResult(model, numpy_images[key], numpy_gts[key])
             loss += temp_loss
             accuracy += temp_acc
             ResultImages[key] = temp_result
-        self.logger.info("loss: {} acc: {}".format(loss / len(numpyImages), accuracy / len(numpyImages)))
+        self.logger.info("loss: {} acc: {}".format(loss / len(numpy_images), accuracy / len(numpy_images)))
         return ResultImages
 
-    def produceSegmentationResult(self, model, numpyImage, numpyGT, calLoss=True):
+    def produceSegmentationResult(self, model, numpy_image, numpy_gt, call_loss=True):
         ''' produce the segmentation result, one time one image'''
-        # model.eval()
+        model.eval()
         # model.cuda()
-        ori_shape = numpyImage.shape
-        tempresult = np.zeros(numpyImage.shape, dtype=np.float32)
-        tempWeight = np.zeros(numpyImage.shape, dtype=np.float32)
-        height, width, depth = self.params['DataManagerParams']['VolSize']
+        image_height, image_width, image_depth = image_shape = numpy_image.shape
+        height, width, depth = vol_shape = self.params['DataManagerParams']['VolSize']
         stride_height, stride_width, stride_depth = self.params['DataManagerParams']['TestStride']
-        whole_height, whole_width, whole_depth = numpyImage.shape
+
+        result = np.zeros(image_shape, dtype=np.float32)
+        result_weight = np.zeros(image_shape, dtype=np.float32)
         all_loss = list()
+
         # crop the image
-        for ystart in list(range(0, whole_height-height, stride_height)) + [whole_height-height]:
-            for xstart in list(range(0, whole_width-width, stride_width)) + [whole_width-width]:
-                for zstart in list(range(0, whole_depth-depth, stride_depth)) + [whole_depth-depth]:
-                    slice_index = (
-                        slice(ystart, ystart + height),
-                        slice(xstart, xstart + width),
-                        slice(zstart, zstart + depth)
-                        )
-                    sliced_img = numpyImage[slice_index]
-                    sliced_label = numpyGT[slice_index]
-                    batchData = sliced_img.reshape(1, 1, *sliced_img.shape)
-                    batchLabel = sliced_label.reshape(1, 1, *sliced_label.shape)
-                    with torch.no_grad():
-                        data = torch.tensor(batchData).cuda().float()
-                        target = torch.tensor(batchLabel).cuda()
-                    # volatile is used in the input variable for the inference,
-                    # which indicates the network doesn't need the gradients, and this flag will transfer to other variable
-                    # as the network computating
-                    output = model(data)
-                    pred = output.max(1)[1]
+        for ystart, xstart, zstart in product(
+            list(range(0, image_height-height, stride_height)) + [image_height-height],
+            list(range(0, image_width-width, stride_width)) + [image_width-width],
+            list(range(0, image_depth-depth, stride_depth)) + [image_depth-depth]
+        ):
+            block_index = (
+                slice(ystart, ystart + height),
+                slice(xstart, xstart + width),
+                slice(zstart, zstart + depth)
+                )
+            image_block = numpy_image[block_index].reshape(1, 1, *vol_shape)
+            label_block = numpy_gt[block_index].reshape(1, 1, *vol_shape)
 
-                    tempresult[slice_index] = tempresult[slice_index] + pred.cpu().numpy().reshape(*sliced_img.shape)
-                    tempWeight[slice_index] = tempWeight[slice_index] + 1
+            data = torch.tensor(image_block).cuda().float()
+            target = torch.tensor(label_block).cuda().int()
+            target = target.view(-1)
+            # volatile is used in the input variable for the inference,
+            # which indicates the network doesn't need the gradients, and this flag will transfer to other variable
+            # as the network computating
+            output = model(data)
+            pred = output.max(1)[1].view(tuple(vol_shape)).int()
+            result[block_index] = result[block_index] + pred.cpu().numpy()
+            result_weight[block_index] = result_weight[block_index] + 1
 
-                    if calLoss:
-                        target = target.view(-1)
-                        temploss = model.nll_loss(output, target).cpu().item()
-                        all_loss.append(temploss)
+            if call_loss:
+                block_loss = model.nll_loss(output, target).cpu().item()
+                all_loss.append(block_loss)
         
-        result = (tempresult / tempWeight)[:ori_shape[0], :ori_shape[1], :ori_shape[2]]
+        result = result / result_weight
         loss = np.mean(all_loss)
-        accuracy = np.mean(result == numpyGT)
-        print(result.sum(), numpyGT.sum())
+        accuracy = np.mean(result == numpy_gt)
+        print(result.sum(), numpy_gt.sum())
         return result, loss, accuracy
 
 
@@ -118,23 +119,21 @@ class Model(object):
         name = prefix_save + str(state['iteration']) + '_' + filename
         torch.save(state, name)
 
-    def trainThread(self, dataQueue, model):
+    def trainThread(self, model):
         '''train the network and plot the training curve'''
-        nr_iter = self.params['ModelParams']['epoch'] * self.dataManagerTrain.num
+        nr_iter = self.params['ModelParams']['iteration']
         batchsize = self.params['ModelParams']['batchsize']
         snapshot = self.params['ModelParams']['snapshot']
-        batchbasesize = (batchsize, 1) + tuple(self.params['DataManagerParams']['VolSize'])
-        batchData = np.zeros(batchbasesize, dtype=float)
-        batchLabel = np.zeros(batchbasesize, dtype=float)
+        vol_shape = self.params['DataManagerParams']['VolSize']
+        data_size = (batchsize, 1) + tuple(vol_shape)
+        batch_image = np.zeros(data_size, dtype=self.dataManagerTrain.numpy_image_type)
+        batch_label = np.zeros(data_size, dtype=self.dataManagerTrain.numpy_gt_type)
 
-        test_interval = self.params['ModelParams']['testInterval']
         train_interval = self.params['ModelParams']['trainInterval']
-        train_loss = np.zeros(nr_iter)
-        train_accuracy = np.zeros(nr_iter // train_interval)
-        testloss = np.zeros(nr_iter // test_interval)
-        testaccuracy = np.zeros(nr_iter // test_interval)
-        tempaccuracy = 0
-        temptrain_loss = 0
+        val_interval = self.params['ModelParams']['valInterval']
+
+        temp_loss = 0
+        temp_accuracy = 0
 
         self.logger.info("Build V-Net")
 
@@ -148,71 +147,68 @@ class Model(object):
 
         for iteration in range(1, nr_iter+1):
             for i in range(batchsize):
-                batchData[i, 0], batchLabel[i, 0] = dataQueue.get()
-
-            data = torch.tensor(batchData).cuda().float()
-            target = torch.tensor(batchLabel).cuda()
+                batch_image[i, 0], batch_label[i, 0] = self.dataManagerTrain.data_queue.get()
+            print(batch_label.min(), batch_label.max())
+            optimizer.zero_grad()
+            data = torch.tensor(batch_image).cuda().float()
+            target = torch.tensor(batch_label).cuda()
             target = target.view(-1)
 
-            optimizer.zero_grad()
             output = model(data)
-            pred = output.max(1)[1]  # get the index of the max log-probability
             loss = model.nll_loss(output, target)
-            # loss = F.nll_loss(output, target)
             loss.backward()
             optimizer.step()
-
-            temptrain_loss += loss.cpu().item()
-            tempaccuracy += pred.eq(target.long()).float().mean().cpu().item()
+            pred = output.max(1)[1].view(-1).int()  # get the index of the max log-probability
+            temp_loss += loss.cpu().item()
+            temp_accuracy += pred.eq(target).float().mean().cpu().item()
 
             if not iteration % train_interval:
-                train_report_iter = iteration // train_interval - 1
-                train_accuracy[train_report_iter] = tempaccuracy / train_interval
-                train_loss[train_report_iter] = temptrain_loss / train_interval
+                train_accuracy = temp_accuracy / train_interval
+                train_loss = temp_loss / train_interval
                 self.logger.info(
                     "training: iter: {} loss: {} acc: {}".format(
                         snapshot + iteration,
-                        train_loss[train_report_iter],
-                        train_accuracy[train_report_iter]
+                        train_loss,
+                        train_accuracy
                     ))
-                tempaccuracy = 0.0
-                temptrain_loss = 0.0
+                temp_accuracy = 0
+                temp_loss = 0
 
-            if not iteration % test_interval:
-                test_report_iter = iteration // test_interval - 1
-                testloss[test_report_iter], testaccuracy[test_report_iter] = self.getValidationLossAndAccuracy(model)
-                if testaccuracy[test_report_iter] > self.max_accuracy:
-                    self.max_accuracy = testaccuracy[test_report_iter]
-                    self.max_accuracy_loss = testloss[test_report_iter]
+            if not iteration % val_interval:
+                val_loss, val_accuracy = self.getValidationLossAndAccuracy(model)
+                if val_accuracy > self.max_accuracy:
+                    self.max_accuracy = val_accuracy
+                    self.max_accuracy_loss = val_loss
                     self.best_iteration_acc = snapshot + iteration
                     self.save_checkpoint({'iteration': self.best_iteration_acc,
                                           'state_dict': model.state_dict(),
                                           'best_acc': True},
                                           self.params['ModelParams']['dirSnapshots'],
                                           self.params['ModelParams']['tailSnapshots'])
-                    self.logger.info(
-                        "testing: best_acc: {} loss: {} accuracy: {}".format(
-                            self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy
-                    ))
 
-                if testloss[test_report_iter] < self.min_loss:
-                    self.min_loss = testloss[test_report_iter]
-                    self.min_loss_accuracy = testaccuracy[test_report_iter]
+                if val_loss < self.min_loss:
+                    self.min_loss = val_loss
+                    self.min_loss_accuracy = val_accuracy
                     self.best_iteration_loss = snapshot + iteration
                     self.save_checkpoint({'iteration': self.best_iteration_loss,
                                           'state_dict': model.state_dict(),
                                           'best_acc': False},
                                           self.params['ModelParams']['dirSnapshots'],
                                           self.params['ModelParams']['tailSnapshots'])
-                    self.logger.info(
-                        "testing: best_loss: {} loss: {} accuracy: {}".format(
-                            self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
-                    ))
+                    
 
                 self.logger.info(
-                    "testing: iteration: {} loss: {} accuracy: {}".format(
-                        snapshot + iteration, testloss[test_report_iter], testaccuracy[test_report_iter]
+                    "validating: iteration: {} loss: {} accuracy: {}".format(
+                        snapshot + iteration, val_loss, val_accuracy
                     ))
+                self.logger.info(
+                    "validating: best_acc: {} loss: {} accuracy: {}".format(
+                        self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy
+                ))
+                self.logger.info(
+                    "validating: best_loss: {} loss: {} accuracy: {}".format(
+                        self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
+                ))
 
     def weights_init(self, m):
         ''' initialize the model'''
@@ -221,7 +217,7 @@ class Model(object):
             nn.init.kaiming_normal_(m.weight)
             m.bias.data.zero_()
 
-    def train(self, dataManagerTrain, dataQueue):
+    def train(self, dataManagerTrain):
         ''' train model'''
         # we define here a data manager object
         self.logger.info('Start to train model')
@@ -231,9 +227,7 @@ class Model(object):
             self.params['ModelParams']['dirResult'], 
             self.params['DataManagerParams']
             )
-        self.dataManagerValidation.loadData()
-        image_num = gt_num = self.dataManagerTrain.num
-        self.logger.info("The dataset has shape: data {}. labels: {}".format(image_num, gt_num))
+        self.dataManagerValidation.load_data()
         # create the network
         model = Net(nll=True)
 
@@ -253,19 +247,16 @@ class Model(object):
 
         #plt.ion()
 
-        self.trainThread(dataQueue, model)
-
-
+        self.trainThread(model)
 
     def test(self, snapnumber):
         self.dataManagerTest = DMNII.DataManagerNii(
             self.params['ModelParams']['dirTest'],
             self.params['ModelParams']['dirResult'],
             self.params['DataManagerParams'],
-            self.params['TestParams']['ProbabilityMap']
         )
-        self.dataManagerTest.loadData()
-        model = Net()
+        self.dataManagerTest.load_data()
+        model = Net(nll=True)
         prefix_save = os.path.join(
             self.params['ModelParams']['dirSnapshots'],
             self.params['ModelParams']['tailSnapshots']
@@ -275,9 +266,9 @@ class Model(object):
         model.load_state_dict(checkpoint['state_dict'])
         model.cuda()
 
-        for name in tqdm(self.dataManagerTest.fileList):
+        for name in tqdm(self.dataManagerTest.data_list):
             print(name)
-            img = self.dataManagerTest.numpyImages[name]
-            label = self.dataManagerTest.numpyGTs[name]
+            img = self.dataManagerTest.numpy_images[name]
+            label = self.dataManagerTest.numpy_gts[name]
             result = self.getTestResultImage(model, img, label)
-            self.dataManagerTest.writeResultsFromNumpyLabel(result, name)
+            self.dataManagerTest.write_result(result, name)

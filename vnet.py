@@ -138,7 +138,6 @@ class VNet(nn.Module):
 
     @staticmethod
     def nll_loss(pred, target):
-        # pred_flat = pred.view(-1, 2)
         target = target.view(target.numel()).long()
         return F.nll_loss(pred, target)
 
