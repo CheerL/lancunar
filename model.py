@@ -73,8 +73,8 @@ class Model(object):
         height, width, depth = vol_shape = self.params['DataManagerParams']['VolSize']
         stride_height, stride_width, stride_depth = self.params['DataManagerParams']['TestStride']
 
-        result = np.zeros(image_shape, dtype=np.float32)
-        result_weight = np.zeros(image_shape, dtype=np.float32)
+        result = np.zeros(image_shape, dtype=self.dataManagerValidation.image_feed_type)
+        result_weight = np.zeros(image_shape, dtype=np.int)
         all_loss = list()
 
         # crop the image
@@ -92,18 +92,16 @@ class Model(object):
             label_block = numpy_gt[block_index].reshape(1, 1, *vol_shape)
 
             data = torch.tensor(image_block).cuda().float()
-            target = torch.tensor(label_block).cuda().int()
-            target = target.view(-1)
+            target = torch.tensor(label_block).cuda().view(-1)
             # volatile is used in the input variable for the inference,
             # which indicates the network doesn't need the gradients, and this flag will transfer to other variable
             # as the network computating
             output = model(data)
-            pred = output.max(1)[1].view(tuple(vol_shape)).int()
+            pred = output.max(1)[1].view(tuple(vol_shape))
             result[block_index] = result[block_index] + pred.cpu().numpy()
             result_weight[block_index] = result_weight[block_index] + 1
-
             if call_loss:
-                block_loss = model.nll_loss(output, target).cpu().item()
+                block_loss = model.loss(output, target).cpu().item()
                 all_loss.append(block_loss)
         
         result = result / result_weight
@@ -126,8 +124,8 @@ class Model(object):
         snapshot = self.params['ModelParams']['snapshot']
         vol_shape = self.params['DataManagerParams']['VolSize']
         data_size = (batchsize, 1) + tuple(vol_shape)
-        batch_image = np.zeros(data_size, dtype=self.dataManagerTrain.numpy_image_type)
-        batch_label = np.zeros(data_size, dtype=self.dataManagerTrain.numpy_gt_type)
+        batch_image = np.zeros(data_size, dtype=self.dataManagerTrain.image_feed_type)
+        batch_label = np.zeros(data_size, dtype=self.dataManagerTrain.gt_feed_type)
 
         train_interval = self.params['ModelParams']['trainInterval']
         val_interval = self.params['ModelParams']['valInterval']
@@ -145,22 +143,30 @@ class Model(object):
             lr=self.params['ModelParams']['baseLR']
         )
 
+
+
         for iteration in range(1, nr_iter+1):
+            for _ in range(batchsize):
+                self.dataManagerTrain.data_queue.get()
+
+            if not iteration % 10:
+                time.sleep(1)
+                print(iteration, self.dataManagerTrain.data_queue.qsize())
             for i in range(batchsize):
                 batch_image[i, 0], batch_label[i, 0] = self.dataManagerTrain.data_queue.get()
-            print(batch_label.min(), batch_label.max())
-            optimizer.zero_grad()
             data = torch.tensor(batch_image).cuda().float()
-            target = torch.tensor(batch_label).cuda()
-            target = target.view(-1)
+            target = torch.tensor(batch_label).cuda().view(-1)
 
             output = model(data)
-            loss = model.nll_loss(output, target)
+
+            loss = model.loss(output, target)
+            flatten = output.max(1)[1].view(-1)  # get the index of the max log-probability
+            temp_loss += loss.cpu().item()
+            temp_accuracy += flatten.eq(target).float().mean().cpu().item()
+
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
-            pred = output.max(1)[1].view(-1).int()  # get the index of the max log-probability
-            temp_loss += loss.cpu().item()
-            temp_accuracy += pred.eq(target).float().mean().cpu().item()
 
             if not iteration % train_interval:
                 train_accuracy = temp_accuracy / train_interval
@@ -228,8 +234,9 @@ class Model(object):
             self.params['DataManagerParams']
             )
         self.dataManagerValidation.load_data()
+        self.dataManagerValidation.save_as_feed()
         # create the network
-        model = Net(nll=True)
+        model = Net(loss_type=self.params['ModelParams']['loss'])
 
         # train from scratch or continue from the snapshot
         if self.params['ModelParams']['snapshot'] > 0:
@@ -245,8 +252,6 @@ class Model(object):
         else:
             model.apply(self.weights_init)
 
-        #plt.ion()
-
         self.trainThread(model)
 
     def test(self, snapnumber):
@@ -256,7 +261,7 @@ class Model(object):
             self.params['DataManagerParams'],
         )
         self.dataManagerTest.load_data()
-        model = Net(nll=True)
+        model = Net(loss_type=self.params['ModelParams']['loss'])
         prefix_save = os.path.join(
             self.params['ModelParams']['dirSnapshots'],
             self.params['ModelParams']['tailSnapshots']

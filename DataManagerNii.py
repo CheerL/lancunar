@@ -4,8 +4,8 @@ import os
 import numpy as np
 import threadpool
 import SimpleITK as sitk
-
-
+import ctypes
+import inspect
 
 from tqdm import tqdm
 from pathos.multiprocessing import ProcessingPool as Pool
@@ -23,8 +23,10 @@ class DataManagerNii:
         self.data_list = list()
         self.numpy_images = dict()
         self.numpy_gts = dict()
-        self.numpy_image_type = np.float32
-        self.numpy_gt_type = np.int32
+        self.image_save_type = np.int32
+        self.gt_save_type = np.int32
+        self.image_feed_type = np.float64
+        self.gt_feed_type = np.int64
         self.data_queue = None
         self.pos_queue = None
 
@@ -37,11 +39,11 @@ class DataManagerNii:
 
     def load_data(self):
         self.create_data_list()
-        self.run_load_thread()
-        # for data in self.data_list:
-        #     self.load_numpy_data(data)
+        # self.run_load_thread()
+        for data in self.data_list:
+            self.load_numpy_data(data)
 
-    def run_train_processes(self):
+    def run_feed_processes(self):
         def data_shuffle_process(pos_queue):
             height, width, depth = self.params['VolSize']
             stride_height, stride_width, stride_depth = self.params['TrainStride']
@@ -61,7 +63,7 @@ class DataManagerNii:
                 for each in pos_list:
                     pos_queue.put(each)
 
-        def data_load_process(pos_queue, data_queue):
+        def data_feed_process(pos_queue, data_queue):
             ''' the thread worker to prepare the training data'''
             empty = 0
             height, width, depth = self.params['VolSize']
@@ -83,12 +85,11 @@ class DataManagerNii:
                     empty += 1
                 else:
                     continue
-                if gt.min() < 0:
-                    print(each, gt.min())
-                randomi = np.random.randint(4)
-                image = np.rot90(image.copy(), randomi)
-                gt = np.rot90(gt.copy(), randomi)
 
+                randomi = np.random.randint(4)
+                image = np.rot90(image.copy(), randomi).astype(self.image_feed_type)
+                image = image / self.numpy_images[key].max()
+                gt = np.rot90(gt.copy(), randomi).astype(self.gt_feed_type)
                 data_queue.put((image, gt))
 
         self.data_queue = Queue(self.params['dataQueueSize'])
@@ -102,18 +103,36 @@ class DataManagerNii:
 
         for _ in range(self.params['nProc']):
             load_process = Process(
-                target=data_load_process,
+                target=data_feed_process,
                 args=(self.pos_queue, self.data_queue),
                 daemon=True
             )
             load_process.start()
 
     def run_load_thread(self):
+        def kill_thread(tid):
+            if not isinstance(tid, ctypes.c_longlong):
+                tid = ctypes.c_longlong(tid)
+            if not inspect.isclass(SystemExit):
+                raise TypeError("Only types can be raised (not instances)")
+            res = ctypes.pythonapi.PyThreadState_SetAsyncExc(
+                tid, ctypes.py_object(SystemExit))
+            if res == 0:
+                raise ValueError("invalid thread id")
+            elif res != 1:
+                # """if it returns a number greater than one, you're in trouble,
+                # and you should call it again with exc=NULL to revert the effect"""
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, 0)
+                raise SystemError("PyThreadState_SetAsyncExc failed")
+
         pool = threadpool.ThreadPool(64)
         reqs = threadpool.makeRequests(self.load_numpy_data, [(data) for data in self.data_list])
         for req in reqs:
             pool.putRequest(req)
         pool.wait()
+
+        for worker in pool.workers:
+            kill_thread(worker.ident)
 
     def write_result(self, result, name):
         result = result.transpose([2, 1, 0])
@@ -126,13 +145,15 @@ class DataManagerNii:
     def load_numpy_data(self, data):
         image_name = os.path.join(self.src_dir, data, 'img.nii.gz')
         gt_name = os.path.join(self.src_dir, data, 'label.nii.gz')
-        image = sitk.GetArrayFromImage(sitk.ReadImage(image_name)).transpose([2, 1, 0]).astype(self.numpy_image_type)
-        image = image / image.max()
+        image = sitk.GetArrayFromImage(sitk.ReadImage(image_name)).transpose([2, 1, 0]).astype(self.image_save_type)
         if os.path.isfile(gt_name):
-            gt = sitk.GetArrayFromImage(sitk.ReadImage(gt_name)).transpose([2, 1, 0]).astype(self.numpy_gt_type)
+            gt = sitk.GetArrayFromImage(sitk.ReadImage(gt_name)).transpose([2, 1, 0]).astype(self.gt_save_type)
         else:
-            gt = np.zeros(image.shape, self.numpy_gt_type)
-        if gt.min() < 0:
-            print(data, gt.min())
+            gt = np.zeros(image.shape, self.gt_save_type)
         self.numpy_images[data] = image
-        self.numpy_gts[data] = image
+        self.numpy_gts[data] = gt
+
+    def save_as_feed(self):
+        for data in self.data_list:
+            self.numpy_images[data] = self.numpy_images[data].astype(self.image_feed_type)
+            self.numpy_gts[data] = self.numpy_gts[data].astype(self.gt_feed_type)

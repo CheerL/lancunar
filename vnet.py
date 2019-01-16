@@ -107,8 +107,15 @@ class OutputTransition(nn.Module):
 class VNet(nn.Module):
     # the number of convolutions in each layer corresponds
     # to what is in the actual prototxt, not the intent
-    def __init__(self, elu=False, nll=False):
+    def __init__(self, loss_type='nll', elu=False):
         super(VNet, self).__init__()
+        if loss_type == 'nll':
+            nll = True
+            self.loss = self.nll_loss
+        elif loss_type == 'dice':
+            nll = False
+            self.loss = self.dice_loss
+
         self.in_tr = InputTransition(32, elu)
         self.down_tr64 = DownTransition(32, 64, 2, elu)
         self.down_tr128 = DownTransition(64, 128, 2, elu)
@@ -128,18 +135,17 @@ class VNet(nn.Module):
         return out
 
     @staticmethod
-    def dice_loss(pred, target):
+    def dice_loss(output, target):
         smooth = 0.001
-        pred_flat = pred[:, :, 1].view(pred.size(0), -1)
-        target = target.float()
-        intersection = pred_flat * target
-        loss = (2 * intersection.sum(1) + smooth) / (pred_flat.pow(2).sum(1) + target.pow(2).sum(1) + smooth)
-        return (1 - loss).mean()
+        onehot = torch.zeros(target.numel(), 2, dtype=torch.float)
+        onehot = onehot.scatter_(1, target.cpu().view(-1, 1), 1).cuda()
+        loss = 1 - (2 * (output * onehot).sum() + smooth) / (output.sum() + onehot.sum() + smooth)
+        # loss.requires_grad = True
+        return loss
 
     @staticmethod
-    def nll_loss(pred, target):
-        target = target.view(target.numel()).long()
-        return F.nll_loss(pred, target)
+    def nll_loss(output, target):
+        return F.nll_loss(output, target)
 
     @staticmethod
     def dice_similarity_coefficient(pred, target):
