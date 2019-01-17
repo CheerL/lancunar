@@ -2,6 +2,7 @@ from __future__ import division, print_function
 
 import os
 import time
+from itertools import product
 
 import numpy as np
 import torch
@@ -9,13 +10,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import torch.optim as optim
-from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import DataManagerNii as DMNII
-from vnet import VNet as Net
 from logger import Logger
-from itertools import product
+from vnet import VNet as Net
+
 
 class Model(object):
     ''' the network model for training, validation and testing '''
@@ -143,15 +143,7 @@ class Model(object):
             lr=self.params['ModelParams']['baseLR']
         )
 
-
-
         for iteration in range(1, nr_iter+1):
-            for _ in range(batchsize):
-                self.dataManagerTrain.data_queue.get()
-
-            if not iteration % 10:
-                time.sleep(1)
-                print(iteration, self.dataManagerTrain.data_queue.qsize())
             for i in range(batchsize):
                 batch_image[i, 0], batch_label[i, 0] = self.dataManagerTrain.data_queue.get()
             data = torch.tensor(batch_image).cuda().float()
