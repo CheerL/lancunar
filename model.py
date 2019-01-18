@@ -10,9 +10,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.init as init
 import torch.optim as optim
-from tqdm import tqdm
 
-import DataManagerNii as DMNII
+import data_manager as data_manager
 from logger import Logger
 from vnet import VNet as Net
 
@@ -31,83 +30,61 @@ class Model(object):
 
     def __init__(self, params):
         self.params = params
-        self.logger = Logger(__name__, self.params['ModelParams']['dirLog'])
+        self.logger = Logger(__name__, self.params['dirLog'])
 
-    def getValidationLossAndAccuracy(self, model):
+    def all_predict(self, net, run_type='validation', silent=True, save=False):
         '''get the segmentation loss and accuracy of the validation data '''
-        numpy_images = self.dataManagerValidation.numpy_images
-        numpy_gts = self.dataManagerValidation.numpy_gts
-        loss = 0.0
-        accuracy = 0.0
-        for key in numpy_images:
-            _, temp_loss, temp_acc = self.produceSegmentationResult(model, numpy_images[key], numpy_gts[key])
-            loss += temp_loss
-            accuracy += temp_acc
-        return loss / len(numpy_images), accuracy / len(numpy_images)
+        if run_type == 'validation':
+            manager = self.dataManagerValidation
+        elif run_type == 'testing':
+            manager = self.dataManagerTest
 
-    def getTestResultImage(self, model, numpy_image, numpy_gt):
-        result, loss, accuracy  = self.produceSegmentationResult(model, numpy_image, numpy_gt)
-        self.logger.info("loss: {} acc: {}".format(loss, accuracy))
-        return result
+        loss_list = list()
+        accuracy_list = list()
+        for data in manager.data_list:
+            image = manager.numpy_images[data]
+            gt = manager.numpy_gts[data]
+            result, loss, accuracy = self.predict(net, manager, image, gt)
+            loss_list.append(loss)
+            accuracy_list.append(accuracy)
 
-    def getTestResultImages(self, model):
-        ''' return the segmentation results of the testing data'''
-        numpy_images = self.dataManagerTest.numpy_images
-        numpy_gts = self.dataManagerTest.numpy_gts
-        ResultImages = dict()
-        loss = 0.0
-        accuracy = 0.0
-        for key in numpy_images:
-            temp_result, temp_loss, temp_acc = self.produceSegmentationResult(model, numpy_images[key], numpy_gts[key])
-            loss += temp_loss
-            accuracy += temp_acc
-            ResultImages[key] = temp_result
-        self.logger.info("loss: {} acc: {}".format(loss / len(numpy_images), accuracy / len(numpy_images)))
-        return ResultImages
+            if not silent:
+                self.logger.info("{.03d}: name: {} loss: {:.7f} acc: {:.5%} predict: {} gt: {}".format(
+                    run_type, data, loss, accuracy, result.sum(), gt.sum()
+                ))
 
-    def produceSegmentationResult(self, model, numpy_image, numpy_gt, call_loss=True):
+            if save:
+                manager.write_result(result, data)
+
+        return np.mean(loss_list), np.mean(accuracy_list)
+
+    def predict(self, net, manager, numpy_image, numpy_gt, call_loss=True):
         ''' produce the segmentation result, one time one image'''
-        model.eval()
-        # model.cuda()
-        image_height, image_width, image_depth = image_shape = numpy_image.shape
-        height, width, depth = vol_shape = self.params['DataManagerParams']['VolSize']
-        stride_height, stride_width, stride_depth = self.params['DataManagerParams']['TestStride']
-
-        result = np.zeros(image_shape, dtype=self.dataManagerValidation.image_feed_type)
-        result_weight = np.zeros(image_shape, dtype=np.int)
+        net.eval()
+        vol_shape = manager.params['VolSize']
+        result = np.zeros(numpy_gt.shape, dtype=manager.gt_feed_type)
         all_loss = list()
 
         # crop the image
-        for ystart, xstart, zstart in product(
-            list(range(0, image_height-height, stride_height)) + [image_height-height],
-            list(range(0, image_width-width, stride_width)) + [image_width-width],
-            list(range(0, image_depth-depth, stride_depth)) + [image_depth-depth]
-        ):
-            block_index = (
-                slice(ystart, ystart + height),
-                slice(xstart, xstart + width),
-                slice(zstart, zstart + depth)
-                )
-            image_block = numpy_image[block_index].reshape(1, 1, *vol_shape)
-            label_block = numpy_gt[block_index].reshape(1, 1, *vol_shape)
+        for num, (image_block, gt_block) in enumerate(zip(numpy_image, numpy_gt)):
+            image_block = image_block.reshape(1, 1, *vol_shape)
+            gt_block = gt_block.reshape(1, 1, *vol_shape)
 
             data = torch.tensor(image_block).cuda().float()
-            target = torch.tensor(label_block).cuda().view(-1)
+            target = torch.tensor(gt_block).cuda().view(-1)
             # volatile is used in the input variable for the inference,
             # which indicates the network doesn't need the gradients, and this flag will transfer to other variable
             # as the network computating
-            output = model(data)
-            pred = output.max(1)[1].view(tuple(vol_shape))
-            result[block_index] = result[block_index] + pred.cpu().numpy()
-            result_weight[block_index] = result_weight[block_index] + 1
+            output = net(data)
+            pred = output.max(1)[1].view(vol_shape)
+            result[num] = pred.cpu().numpy()
+
             if call_loss:
-                block_loss = model.loss(output, target).cpu().item()
+                block_loss = net.loss(output, target).cpu().item()
                 all_loss.append(block_loss)
-        
-        result = result / result_weight
+
         loss = np.mean(all_loss)
         accuracy = np.mean(result == numpy_gt)
-        print(result.sum(), numpy_gt.sum())
         return result, loss, accuracy
 
 
@@ -117,97 +94,6 @@ class Model(object):
         name = prefix_save + str(state['iteration']) + '_' + filename
         torch.save(state, name)
 
-    def trainThread(self, model):
-        '''train the network and plot the training curve'''
-        nr_iter = self.params['ModelParams']['iteration']
-        batchsize = self.params['ModelParams']['batchsize']
-        snapshot = self.params['ModelParams']['snapshot']
-        vol_shape = self.params['DataManagerParams']['VolSize']
-        data_size = (batchsize, 1) + tuple(vol_shape)
-        batch_image = np.zeros(data_size, dtype=self.dataManagerTrain.image_feed_type)
-        batch_label = np.zeros(data_size, dtype=self.dataManagerTrain.gt_feed_type)
-
-        train_interval = self.params['ModelParams']['trainInterval']
-        val_interval = self.params['ModelParams']['valInterval']
-
-        temp_loss = 0
-        temp_accuracy = 0
-
-        self.logger.info("Build V-Net")
-
-        model.train()
-        model.cuda()
-        optimizer = optim.Adam(
-            model.parameters(),
-            weight_decay=self.params['ModelParams']['weight_decay'],
-            lr=self.params['ModelParams']['baseLR']
-        )
-
-        for iteration in range(1, nr_iter+1):
-            for i in range(batchsize):
-                batch_image[i, 0], batch_label[i, 0] = self.dataManagerTrain.data_queue.get()
-            data = torch.tensor(batch_image).cuda().float()
-            target = torch.tensor(batch_label).cuda().view(-1)
-
-            output = model(data)
-
-            loss = model.loss(output, target)
-            flatten = output.max(1)[1].view(-1)  # get the index of the max log-probability
-            temp_loss += loss.cpu().item()
-            temp_accuracy += flatten.eq(target).float().mean().cpu().item()
-
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-
-            if not iteration % train_interval:
-                train_accuracy = temp_accuracy / train_interval
-                train_loss = temp_loss / train_interval
-                self.logger.info(
-                    "training: iter: {} loss: {} acc: {}".format(
-                        snapshot + iteration,
-                        train_loss,
-                        train_accuracy
-                    ))
-                temp_accuracy = 0
-                temp_loss = 0
-
-            if not iteration % val_interval:
-                val_loss, val_accuracy = self.getValidationLossAndAccuracy(model)
-                if val_accuracy > self.max_accuracy:
-                    self.max_accuracy = val_accuracy
-                    self.max_accuracy_loss = val_loss
-                    self.best_iteration_acc = snapshot + iteration
-                    self.save_checkpoint({'iteration': self.best_iteration_acc,
-                                          'state_dict': model.state_dict(),
-                                          'best_acc': True},
-                                          self.params['ModelParams']['dirSnapshots'],
-                                          self.params['ModelParams']['tailSnapshots'])
-
-                if val_loss < self.min_loss:
-                    self.min_loss = val_loss
-                    self.min_loss_accuracy = val_accuracy
-                    self.best_iteration_loss = snapshot + iteration
-                    self.save_checkpoint({'iteration': self.best_iteration_loss,
-                                          'state_dict': model.state_dict(),
-                                          'best_acc': False},
-                                          self.params['ModelParams']['dirSnapshots'],
-                                          self.params['ModelParams']['tailSnapshots'])
-                    
-
-                self.logger.info(
-                    "validating: iteration: {} loss: {} accuracy: {}".format(
-                        snapshot + iteration, val_loss, val_accuracy
-                    ))
-                self.logger.info(
-                    "validating: best_acc: {} loss: {} accuracy: {}".format(
-                        self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy
-                ))
-                self.logger.info(
-                    "validating: best_loss: {} loss: {} accuracy: {}".format(
-                        self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
-                ))
-
     def weights_init(self, m):
         ''' initialize the model'''
         classname = m.__class__.__name__
@@ -215,57 +101,131 @@ class Model(object):
             nn.init.kaiming_normal_(m.weight)
             m.bias.data.zero_()
 
-    def train(self, dataManagerTrain):
+    def train(self):
         ''' train model'''
-        # we define here a data manager object
-        self.logger.info('Start to train model')
-        self.dataManagerTrain = dataManagerTrain
-        self.dataManagerValidation = DMNII.DataManagerNii(
-            self.params['ModelParams']['dirValidation'], 
-            self.params['ModelParams']['dirResult'], 
-            self.params['DataManagerParams']
-            )
+        nr_iter = self.params['iteration']
+        snapshot = self.params['snapshot']
+        train_interval = self.params['trainInterval']
+        val_interval = self.params['valInterval']
+
+        self.dataManagerTrain = data_manager.DataManager(
+            self.params['dirTrain'], 
+            self.params['dirResult'],
+            self.params['dataManager']
+        )
+        self.dataManagerValidation = data_manager.DataManager(
+            self.params['dirValidation'], 
+            self.params['dirResult'],
+            self.params['dataManager']
+        )
+        self.dataManagerTrain.load_data()
         self.dataManagerValidation.load_data()
-        self.dataManagerValidation.save_as_feed()
+
+        self.dataManagerTrain.run_feed_thread()
         # create the network
-        model = Net(loss_type=self.params['ModelParams']['loss'])
-
-        # train from scratch or continue from the snapshot
-        if self.params['ModelParams']['snapshot'] > 0:
-            self.logger.info("loading checkpoint " + str(self.params['ModelParams']['snapshot']))
+        net = Net(loss_type=self.params['loss'])
+        if self.params['snapshot'] > 0:
+            self.logger.info("loading checkpoint " + str(self.params['snapshot']))
             prefix_save = os.path.join(
-                self.params['ModelParams']['dirSnapshots'],
-                self.params['ModelParams']['tailSnapshots']
+                self.params['dirSnapshots'],
+                self.params['tailSnapshots']
             )
-            name = prefix_save + str(self.params['ModelParams']['snapshot']) + '_' + "checkpoint.pth.tar"
+            name = prefix_save + str(self.params['snapshot']) + '_' + "checkpoint.pth.tar"
             checkpoint = torch.load(name)
-            model.load_state_dict(checkpoint['state_dict'])
-            self.logger.info("loaded checkpoint " + str(self.params['ModelParams']['snapshot']))
+            net.load_state_dict(checkpoint['state_dict'])
+            self.logger.info("loaded checkpoint " + str(self.params['snapshot']))
         else:
-            model.apply(self.weights_init)
+            net.apply(self.weights_init)
 
-        self.trainThread(model)
+        temp_loss = 0
+        temp_accuracy = 0
 
-    def test(self, snapnumber):
-        self.dataManagerTest = DMNII.DataManagerNii(
-            self.params['ModelParams']['dirTest'],
-            self.params['ModelParams']['dirResult'],
-            self.params['DataManagerParams'],
+        net.train()
+        net.cuda()
+
+        optimizer = optim.Adam(
+            net.parameters(),
+            weight_decay=self.params['weight_decay'],
+            lr=self.params['baseLR']
+        )
+
+        self.logger.info("Run {}".format(net.net_name))
+
+        for iteration in range(1, nr_iter+1):
+            batch_image, batch_gt = self.dataManagerTrain.data_queue.get()
+            data = torch.tensor(batch_image).cuda().float()
+            target = torch.tensor(batch_gt).cuda().view(-1)
+
+            output = net(data)
+
+            loss = net.loss(output, target)
+            flatten = output.max(1)[1].view(-1)  # get the index of the max log-probability
+            temp_loss += loss.cpu().item()
+            temp_accuracy += flatten.eq(target).float().mean().cpu().item()
+
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            real_iteration = snapshot + iteration
+            if not iteration % train_interval:
+                train_accuracy = temp_accuracy / train_interval
+                train_loss = temp_loss / train_interval
+                self.logger.info(
+                    "training: iter: {} loss: {:.7f} acc: {:.5%}".format(
+                        real_iteration,
+                        train_loss,
+                        train_accuracy
+                    ))
+                temp_accuracy = 0
+                temp_loss = 0
+
+            if not iteration % val_interval:
+                val_loss, val_accuracy = self.all_predict(net, silent=False)
+                if val_accuracy > self.max_accuracy:
+                    self.max_accuracy = val_accuracy
+                    self.max_accuracy_loss = val_loss
+                    self.best_iteration_acc = real_iteration
+
+                if val_loss < self.min_loss:
+                    self.min_loss = val_loss
+                    self.min_loss_accuracy = val_accuracy
+                    self.best_iteration_loss = real_iteration
+
+                self.save_checkpoint({'iteration': real_iteration,
+                                        'state_dict': net.state_dict(),
+                                        'best_acc': self.best_iteration_loss == real_iteration},
+                                        self.params['dirSnapshots'],
+                                        self.params['tailSnapshots'])
+
+                self.logger.info(
+                    "validating: iteration: {} loss: {:.7f} accuracy: {:.5%}".format(
+                        real_iteration, val_loss, val_accuracy
+                ))
+                self.logger.info(
+                    "validating: best_acc: {} loss: {:.7f} accuracy: {:.5%}".format(
+                        self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy
+                ))
+                self.logger.info(
+                    "validating: best_loss: {} loss: {:.7f} accuracy: {:.5%}".format(
+                        self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
+                ))
+
+    def test(self):
+        self.dataManagerTest = data_manager.DataManager(
+            self.params['dirTest'],
+            self.params['dirResult'],
+            self.params['dataManager'],
         )
         self.dataManagerTest.load_data()
-        model = Net(loss_type=self.params['ModelParams']['loss'])
-        prefix_save = os.path.join(
-            self.params['ModelParams']['dirSnapshots'],
-            self.params['ModelParams']['tailSnapshots']
-        )
-        name = prefix_save + str(snapnumber) + '_' + "checkpoint.pth.tar"
-        checkpoint = torch.load(name)
-        model.load_state_dict(checkpoint['state_dict'])
-        model.cuda()
 
-        for name in tqdm(self.dataManagerTest.data_list):
-            print(name)
-            img = self.dataManagerTest.numpy_images[name]
-            label = self.dataManagerTest.numpy_gts[name]
-            result = self.getTestResultImage(model, img, label)
-            self.dataManagerTest.write_result(result, name)
+        net = Net(loss_type=self.params['loss'])
+        prefix_save = os.path.join(
+            self.params['dirSnapshots'],
+            self.params['tailSnapshots']
+        )
+        name = prefix_save + str(self.params['snapshot']) + '_' + "checkpoint.pth.tar"
+        checkpoint = torch.load(name)
+        net.load_state_dict(checkpoint['state_dict'])
+        net.cuda()
+        loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=True)
+        self.logger.info('testing: loss: {:.7f} accuracy: {:.5%}'.format(loss, accuracy))

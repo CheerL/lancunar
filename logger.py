@@ -23,11 +23,12 @@ class Logger(logging.Logger):
     """
 
     def __init__(self, name, log_path, level=logging.DEBUG, handlers=['file', 'stream']):
-        self.name = name
-        self.level = level
+        super().__init__(name, level)
         self.log_path = log_path
         self.file_handler = None
         self.stream_handler = None
+        self.log_format = '%(asctime)s %(filename)s[%(lineno)d] %(levelname)s %(message)s'
+        self.date_format = '%Y-%m-%d %H:%M:%S'
         logging.Logger.__init__(self, self.name, level=level)
         for handler in handlers:
             getattr(self, 'set_{}_handler'.format(handler))()
@@ -52,8 +53,7 @@ class Logger(logging.Logger):
             file_handler.setLevel(self.level)
         else:
             file_handler.setLevel(level)
-        formatter = logging.Formatter(
-            '%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
+        formatter = logging.Formatter(self.log_format, self.date_format)
 
         file_handler.setFormatter(formatter)
         self.file_handler = file_handler
@@ -66,8 +66,7 @@ class Logger(logging.Logger):
         :return:
         """
         stream_handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            '%(asctime)s %(filename)s[line:%(lineno)d] %(levelname)s %(message)s')
+        formatter = logging.Formatter(self.log_format, self.date_format)
         stream_handler.setFormatter(formatter)
         if not level:
             stream_handler.setLevel(self.level)

@@ -6,11 +6,6 @@ name = "pypi"
 [packages]
 simpleitk = "*"
 numpy = "*"
-tqdm = "*"
-pathos = "*"
-scipy = "*"
-scikit-image = "*"
-matplotlib = "*"
 torch_win = {file = "https://download.pytorch.org/whl/cu90/torch-1.0.0-cp36-cp36m-win_amd64.whl",sys_platform = "== 'win32'"}
 torch = {version = "*",sys_platform = "== 'linux'"}
 torchvision = "*"

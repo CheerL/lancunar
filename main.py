@@ -3,67 +3,52 @@ import sys
 
 import numpy as np
 
-import DataManagerNii as DMNII
+import data_manager
 from model import Model
 
 if __name__ == '__main__':
     basePath = os.getcwd() # get current path
     params = dict() # all parameters
-    params['DataManagerParams'] = dict() # parameters for data manager class
-    params['ModelParams'] = dict() # parameters for model
-    params['TestParams'] = dict() # parameters for testing
+    data_manager_params = dict() # parameters for data manager class
+    model_params = dict() # parameters for model
+    test_params = dict() # parameters for testing
     # params of the algorithm
-    params['ModelParams']['device'] = 0 # the id of the GPU
-    params['ModelParams']['snapshot'] = 0 #85000
-    params['ModelParams']['dirTrain'] = 'data/Lancunar/Lacunar_training/' # the directory of training data
-    params['ModelParams']['dirValidation'] = 'data/Lancunar/Lacunar_validation/' # the directory of training data
-    params['ModelParams']['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
-    # params['ModelParams']['dirTrain'] = '../CMB/mini_training/' # the directory of training data
-    # params['ModelParams']['dirValidation']='../CMB/mini_validation/' #the directory of the validation data
-    # params['ModelParams']['dirTest']='../CMB/mini_testing/' #the directory of the testing data
-    params['ModelParams']['dirResult'] = "result/" # the directory of the results of testing data
+    model_params['device'] = 0 # the id of the GPU
+    model_params['snapshot'] = 5000 #85000
+    model_params['dirTrain'] = 'data/Lancunar/Lacunar_training/' # the directory of training data
+    model_params['dirValidation'] = 'data/Lancunar/Lacunar_validation/' # the directory of training data
+    model_params['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
+    # model_params['dirTrain'] = '../CMB/mini_training/' # the directory of training data
+    # model_params['dirValidation']='../CMB/mini_validation/' #the directory of the validation data
+    # model_params['dirTest']='../CMB/mini_testing/' #the directory of the testing data
+    model_params['dirResult'] = "result/" # the directory of the results of testing data
     # where to save the models while training
-    params['ModelParams']['dirLog'] = "log/"
-    params['ModelParams']['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
-    params['ModelParams']['tailSnapshots'] = 'WL/mini_vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
-    params['ModelParams']['batchsize'] = 100  # the batch size
-    params['ModelParams']['iteration'] = 1000000
-    params['ModelParams']['baseLR'] = 1e-4  # the learning rate, initial one
-    params['ModelParams']['weight_decay'] = 0.0005
+    model_params['dirLog'] = "log/"
+    model_params['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
+    model_params['tailSnapshots'] = 'WL/mini_vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
+    model_params['batchsize'] = 150  # the batch size
+    model_params['iteration'] = 1000000
+    model_params['baseLR'] = 1e-4  # the learning rate, initial one
+    model_params['weight_decay'] = 0.0005
 
-    params['ModelParams']['valInterval'] = 500  # the number of training interations between testing
-    params['ModelParams']['trainInterval'] = 20  # the number of training interations between testing
-    params['ModelParams']['loss'] = 'nll'
+    model_params['valInterval'] = 500  # the number of training interations between testing
+    model_params['trainInterval'] = 50  # the number of training interations between testing
+    model_params['loss'] = 'nll'
     # params of the DataManager
-    params['DataManagerParams']['epoch'] = 5000  # the number of total training iterations
-    params['DataManagerParams']['feedThreadNum'] = 8  # the number of threads to do data augmentation
-    params['DataManagerParams']['loadThreadNum'] = 64
-    params['DataManagerParams']['VolSize'] = np.asarray([64, 64, 4], dtype=int) # the size of the crop image
-    params['DataManagerParams']['TestStride'] = np.asarray([64, 64, 4], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
-    params['DataManagerParams']['TrainStride'] = np.asarray([32, 32, 2], dtype=int) # the stride of the adjacent crop image in testing phase and validation phase
-    params['DataManagerParams']['MaxEmpty'] = 1
-    params['DataManagerParams']['dataQueueSize'] = 1000
-    params['DataManagerParams']['posQueueSize'] = 4000
+    data_manager_params['feedThreadNum'] = 8  # the number of threads to do data augmentation
+    data_manager_params['loadThreadNum'] = 64
+    data_manager_params['VolSize'] = (64, 64, 4) # the size of the crop image
+    data_manager_params['batchsize'] = 100  # the batch size
+    data_manager_params['MaxEmpty'] = 1
+    data_manager_params['dataQueueSize'] = 20
+
+    model_params['dataManager'] = data_manager_params
 
     # Ture: produce the probaility map in the testing phase, False: produce the  label image
-    params['TestParams']['ProbabilityMap'] = False
-    train = [i for i, j in enumerate(sys.argv) if j == '-train']
-    if len(train) > 0:
-        dataManagerTrain = DMNII.DataManagerNii(
-            params['ModelParams']['dirTrain'],
-            params['ModelParams']['dirResult'],
-            params['DataManagerParams']
-            )
-        dataManagerTrain.load_data()  # loads in sitk format
-        dataManagerTrain.run_feed_thread()
-        model = Model(params)
-        model.train(dataManagerTrain) #train model
+    # params['TestParams']['ProbabilityMap'] = False
+    model = Model(model_params)
+    if '-train' in sys.argv:
+        model.train() #train model
 
-    # test = [i for i, j in enumerate(sys.argv) if j == '-test']
-    # for i in sys.argv:
-    #     if i.isdigit():
-    #         snapnumber = i
-    #         break
-
-    # if len(test) > 0:
-    #     model.test(snapnumber) # test model, the snapnumber is the number of the model snapshot
+    if '-test' in sys.argv:
+        model.test() # test model, the snapnumber is the number of the model snapshot

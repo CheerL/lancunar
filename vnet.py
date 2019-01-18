@@ -122,6 +122,7 @@ class VNet(nn.Module):
         self.up_tr64 = UpTransition(128, 64, 2, elu)
         self.up_tr32 = UpTransition(64, 32, 2, elu)
         self.out_tr = OutputTransition(32, elu, nll)
+        self.net_name = 'V-Net'
 
     def forward(self, x):
         out32 = self.in_tr(x)
