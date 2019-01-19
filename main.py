@@ -14,7 +14,7 @@ if __name__ == '__main__':
     test_params = dict() # parameters for testing
     # params of the algorithm
     model_params['device'] = 0 # the id of the GPU
-    model_params['snapshot'] = 29000 #85000
+    model_params['snapshot'] = 32000 #85000
     model_params['dirTrain'] = 'data/Lancunar/Lacunar_training/' # the directory of training data
     model_params['dirValidation'] = 'data/Lancunar/Lacunar_validation/' # the directory of training data
     model_params['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
@@ -27,7 +27,7 @@ if __name__ == '__main__':
     model_params['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
     model_params['tailSnapshots'] = 'WL/mini_vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
     model_params['iteration'] = 1000000
-    model_params['baseLR'] = 1e-5  # the learning rate, initial one
+    model_params['baseLR'] = 1e-4  # the learning rate, initial one
     model_params['weight_decay'] = 0.0005
 
     model_params['valInterval'] = 500  # the number of training interations between testing

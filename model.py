@@ -154,7 +154,7 @@ class Model(object):
             weight_decay=self.params['weight_decay'],
             lr=self.params['baseLR']
         )
-
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=25, verbose=True)
         self.logger.info("Run {}".format(net.net_name))
 
         for iteration in range(1, nr_iter+1):
@@ -169,9 +169,6 @@ class Model(object):
             temp_loss += loss.cpu().item()
             temp_accuracy += flatten.eq(target).float().mean().cpu().item()
 
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
             real_iteration = snapshot + iteration
             if not iteration % train_interval:
                 train_accuracy = temp_accuracy / train_interval
@@ -215,6 +212,11 @@ class Model(object):
                     "validating: best_loss: {} loss: {:.7f} accuracy: {:.5%}".format(
                         self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
                 ))
+
+            optimizer.zero_grad()
+            loss.backward()
+            scheduler.step(loss)
+            # optimizer.step()
 
     def test(self):
         self.dataManagerTest = data_manager.DataManager(
