@@ -49,7 +49,7 @@ class Model(object):
             accuracy_list.append(accuracy)
 
             if not silent:
-                self.logger.info("{.03d}: name: {} loss: {:.7f} acc: {:.5%} predict: {} gt: {}".format(
+                self.logger.info("{}: name: {} loss: {:.7f} acc: {:.5%} predict: {} gt: {}".format(
                     run_type, data, loss, accuracy, result.sum(), gt.sum()
                 ))
 
@@ -69,6 +69,10 @@ class Model(object):
         for num, (image_block, gt_block) in enumerate(zip(numpy_image, numpy_gt)):
             image_block = image_block.reshape(1, 1, *vol_shape)
             gt_block = gt_block.reshape(1, 1, *vol_shape)
+        # batch_size = manager.params['batchsize']
+        # for num in range(0, numpy_gt.shape[0], batch_size):
+        #     image_block = numpy_image[num:num+batch_size].reshape(-1, 1, *vol_shape)
+        #     gt_block = numpy_gt[num:num+batch_size].reshape(-1, 1, *vol_shape)
 
             data = torch.tensor(image_block).cuda().float()
             target = torch.tensor(gt_block).cuda().view(-1)
@@ -76,8 +80,10 @@ class Model(object):
             # which indicates the network doesn't need the gradients, and this flag will transfer to other variable
             # as the network computating
             output = net(data)
-            pred = output.max(1)[1].view(vol_shape)
+            pred = output.max(1)[1].view(*vol_shape)
             result[num] = pred.cpu().numpy()
+            # pred = output.max(1)[1].view(-1, *vol_shape)
+            # result[num:num+batch_size] = pred.cpu().numpy()
 
             if call_loss:
                 block_loss = net.loss(output, target).cpu().item()
@@ -227,5 +233,5 @@ class Model(object):
         checkpoint = torch.load(name)
         net.load_state_dict(checkpoint['state_dict'])
         net.cuda()
-        loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=True)
+        loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=False)
         self.logger.info('testing: loss: {:.7f} accuracy: {:.5%}'.format(loss, accuracy))

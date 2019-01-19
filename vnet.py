@@ -138,10 +138,12 @@ class VNet(nn.Module):
     @staticmethod
     def dice_loss(output, target):
         smooth = 0.001
-        onehot = torch.zeros(target.numel(), 2, dtype=torch.float)
-        onehot = onehot.scatter_(1, target.cpu().view(-1, 1), 1).cuda()
-        loss = 1 - (2 * (output * onehot).sum() + smooth) / (output.sum() + onehot.sum() + smooth)
-        # loss.requires_grad = True
+        # onehot = torch.zeros(target.numel(), 2, dtype=torch.float)
+        # onehot = onehot.scatter_(1, target.cpu().view(-1, 1), 1).cuda()
+        # loss = 1 - (2 * (output * onehot).sum() + smooth) / (output.sum() + onehot.sum() + smooth)
+        pred = output[:, 1]
+        target = target.float()
+        loss = 1 - (2 * (pred * target).sum() + smooth) / (pred.sum() + target.sum() + smooth)
         return loss
 
     @staticmethod
