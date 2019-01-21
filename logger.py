@@ -29,7 +29,7 @@ class Logger(logging.Logger):
         self.stream_handler = None
         self.log_format = '%(asctime)s %(filename)s[%(lineno)d] %(levelname)s %(message)s'
         self.date_format = '%Y-%m-%d %H:%M:%S'
-        logging.Logger.__init__(self, self.name, level=level)
+        logging.Logger.__init__(self, name, level=level)
         for handler in handlers:
             getattr(self, 'set_{}_handler'.format(handler))()
 

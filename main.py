@@ -14,7 +14,7 @@ if __name__ == '__main__':
     test_params = dict() # parameters for testing
     # params of the algorithm
     model_params['device'] = 0 # the id of the GPU
-    model_params['snapshot'] = 32000 #85000
+    model_params['snapshot'] = 0 #39000 #85000
     model_params['dirTrain'] = 'data/Lancunar/Lacunar_training/' # the directory of training data
     model_params['dirValidation'] = 'data/Lancunar/Lacunar_validation/' # the directory of training data
     model_params['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
@@ -26,13 +26,22 @@ if __name__ == '__main__':
     model_params['dirLog'] = "log/"
     model_params['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
     model_params['tailSnapshots'] = 'WL/mini_vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
-    model_params['iteration'] = 1000000
-    model_params['baseLR'] = 1e-4  # the learning rate, initial one
+    model_params['iteration'] = 100000
     model_params['weight_decay'] = 0.0005
-
     model_params['valInterval'] = 500  # the number of training interations between testing
     model_params['trainInterval'] = 50  # the number of training interations between testing
+
     model_params['loss'] = 'nll'
+
+    if model_params['loss'] == 'nll':
+        # for nll loss
+        model_params['baseLR'] = 1e-2  # the learning rate, initial one
+        model_params['minLR'] = 1e-5  # the learning rate, initial one
+    elif model_params['loss'] == 'dice':
+        # for dice loss
+        model_params['baseLR'] = 10  # the learning rate, initial one
+        model_params['minLR'] = 1e-4  # the learning rate, initial one
+
     # params of the DataManager
     data_manager_params['feedThreadNum'] = 8  # the number of threads to do data augmentation
     data_manager_params['loadThreadNum'] = 64
@@ -51,3 +60,6 @@ if __name__ == '__main__':
 
     if '-test' in sys.argv:
         model.test() # test model, the snapnumber is the number of the model snapshot
+
+    if '-lr' in sys.argv:
+        model.find_lr(1e-5, 1000, 0.9)

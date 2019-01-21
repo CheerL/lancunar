@@ -12,6 +12,7 @@ class DataManager:
         self.src_dir = src_dir
         self.result_dir = result_dir
 
+        self.data_num = 0
         self.data_list = list()
         self.numpy_images = dict()
         self.numpy_gts = dict()
@@ -36,7 +37,9 @@ class DataManager:
                 for pos in np.where(gt.any((1, 2, 3))==True)[0]:
                     true_pos.append((data, pos))
 
-            false_num = len(true_pos) * self.params['MaxEmpty']
+            true_num = len(true_pos)
+            false_num = int(true_num * self.params['MaxEmpty'])
+            self.data_num = true_num + false_num
 
             while True:
                 false_pos = list()

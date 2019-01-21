@@ -11,9 +11,10 @@ import torch.nn.functional as F
 import torch.nn.init as init
 import torch.optim as optim
 
-import data_manager as data_manager
+import data_manager
 from logger import Logger
 from vnet import VNet as Net
+import matplotlib.pyplot as plt
 
 
 class Model(object):
@@ -149,12 +150,28 @@ class Model(object):
         net.train()
         net.cuda()
 
-        optimizer = optim.Adam(
+        # optimizer = optim.Adam(
+        #     net.parameters(),
+        #     weight_decay=self.params['weight_decay'],
+        #     lr=self.params['baseLR']
+        # )
+        optimizer = optim.SGD(
             net.parameters(),
+            lr=self.params['baseLR'],
+            momentum=0.9,
             weight_decay=self.params['weight_decay'],
-            lr=self.params['baseLR']
         )
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', factor=0.5, patience=25, verbose=True)
+
+        if snapshot:
+            for group in optimizer.param_groups:
+                group.setdefault('initial_lr', self.params['baseLR'])
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=100,
+            last_epoch=snapshot-1,
+            eta_min=self.params['minLR']
+        )
         self.logger.info("Run {}".format(net.net_name))
 
         for iteration in range(1, nr_iter+1):
@@ -215,8 +232,9 @@ class Model(object):
 
             optimizer.zero_grad()
             loss.backward()
-            scheduler.step(loss)
-            # optimizer.step()
+            scheduler.step()
+            # scheduler.step(loss)
+            optimizer.step()
 
     def test(self):
         self.dataManagerTest = data_manager.DataManager(
@@ -237,3 +255,72 @@ class Model(object):
         net.cuda()
         loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=False)
         self.logger.info('testing: loss: {:.7f} accuracy: {:.5%}'.format(loss, accuracy))
+
+    def try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, beta=0.9):
+        def update_lr(optimizer, lr):
+            for group in optimizer.param_groups:
+                group['lr'] = lr
+
+        num = 50
+        factor = (end_lr / start_lr) ** (1 / num)
+        lr = start_lr
+        avg_loss = 0.
+        best_loss = 0.
+        losses = []
+        log_lrs = []
+
+        for iteration in range(1, num+1):
+            update_lr(optimizer, lr)
+            batch_image, batch_gt = self.dataManagerTrain.data_queue.get()
+            data = torch.tensor(batch_image).cuda().float()
+            target = torch.tensor(batch_gt).cuda().view(-1)
+
+            output = net(data)
+            loss = net.loss(output, target)
+
+            #Compute the smoothed loss
+            avg_loss = beta * avg_loss + (1 - beta) * loss.cpu().item()
+            smoothed_loss = avg_loss / (1 - beta ** iteration)
+            #Stop if the loss is exploding
+            if iteration > 1 and smoothed_loss > 4 * best_loss:
+                return log_lrs, losses
+            #Record the best loss
+            if smoothed_loss < best_loss or iteration == 1:
+                best_loss = smoothed_loss
+            #Store the values
+            losses.append(smoothed_loss)
+            log_lr = np.log10(lr)
+            log_lrs.append(log_lr)
+            #Do the SGD step
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            #Update the lr for the next step
+            self.logger.info('lr: {}, log lr: {:.4f}, loss: {:.7f}, best loss: {:.7f}'.format(lr, log_lr, smoothed_loss, best_loss))
+            lr *= factor
+            if not iteration % 10 or iteration == num:
+                plt.plot(log_lrs, losses)
+                plt.savefig('find_lr.{}.{}.jpg'.format(start_lr, end_lr))
+
+    def find_lr(self, start_lr=1e-7, end_lr=10.0, beta=0.95):
+        self.dataManagerTrain = data_manager.DataManager(
+            self.params['dirTrain'], 
+            self.params['dirResult'],
+            self.params['dataManager']
+        )
+        self.dataManagerTrain.load_data()
+        self.dataManagerTrain.run_feed_thread()
+        # create the network
+        net = Net(loss_type=self.params['loss'])
+        net.apply(self.weights_init)
+
+        net.train()
+        net.cuda()
+
+        optimizer = optim.SGD(
+            net.parameters(),
+            lr=self.params['baseLR'],
+            momentum=0.9,
+            weight_decay=self.params['weight_decay'],
+        )
+        self.try_lr(net, optimizer, start_lr, end_lr, beta)
