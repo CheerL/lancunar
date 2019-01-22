@@ -25,22 +25,22 @@ if __name__ == '__main__':
     # where to save the models while training
     model_params['dirLog'] = "log/"
     model_params['dirSnapshots'] = "snapshot/" # the directory of the model snapshots for training
-    model_params['tailSnapshots'] = 'WL/mini_vnet/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
+    model_params['tailSnapshots'] = 'WL/dice/' # the full path of the model snapshots is the join of dirsnapshots and presnapshots
     model_params['iteration'] = 100000
     model_params['weight_decay'] = 0.0005
     model_params['valInterval'] = 500  # the number of training interations between testing
     model_params['trainInterval'] = 50  # the number of training interations between testing
 
-    model_params['loss'] = 'nll'
+    model_params['loss'] = 'dice'
 
     if model_params['loss'] == 'nll':
         # for nll loss
-        model_params['baseLR'] = 1e-2  # the learning rate, initial one
-        model_params['minLR'] = 1e-5  # the learning rate, initial one
+        model_params['baseLR'] = 5e-3  # the learning rate, initial one
+        model_params['minLR'] = 1e-6  # the learning rate, initial one
     elif model_params['loss'] == 'dice':
         # for dice loss
-        model_params['baseLR'] = 10  # the learning rate, initial one
-        model_params['minLR'] = 1e-4  # the learning rate, initial one
+        model_params['baseLR'] = 5e-2  # the learning rate, initial one
+        model_params['minLR'] = 5e-6  # the learning rate, initial one
 
     # params of the DataManager
     data_manager_params['feedThreadNum'] = 8  # the number of threads to do data augmentation

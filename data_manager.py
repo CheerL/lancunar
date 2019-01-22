@@ -13,12 +13,14 @@ class DataManager:
         self.result_dir = result_dir
 
         self.data_num = 0
+        self.batch_size = params['batchsize']
         self.data_list = list()
         self.numpy_images = dict()
         self.numpy_gts = dict()
         self.image_feed_type = np.float64
         self.gt_feed_type = np.int64
         self.data_queue = None
+        self.shapes = dict()
 
     def create_data_list(self):
         self.data_list = [
@@ -60,11 +62,11 @@ class DataManager:
 
         def data_feed_thread(pos_queue):
             ''' the thread worker to prepare the training data'''
-            data_size = (self.params['batchsize'], 1) + self.params['VolSize']
+            data_size = (self.batch_size, 1) + self.params['VolSize']
             while True:
                 image_list = []
                 gt_list = []
-                for _ in range(self.params['batchsize']):
+                for _ in range(self.batch_size):
                     key, pos = pos_queue.get()
                     image = self.numpy_images[key][pos]
                     gt = self.numpy_gts[key][pos]
@@ -82,7 +84,7 @@ class DataManager:
 
         self.data_queue = threadpool.Queue.Queue(self.params['dataQueueSize'])
         pos_queue = threadpool.Queue.Queue(
-            self.params['feedThreadNum'] * self.params['dataQueueSize'] * self.params['batchsize']
+            self.params['feedThreadNum'] * self.params['dataQueueSize'] * self.batch_size
         )
 
         pool = threadpool.ThreadPool(self.params['feedThreadNum'] + 1)
@@ -118,11 +120,13 @@ class DataManager:
                 gt = sitk.GetArrayFromImage(sitk.ReadImage(gt_name)).transpose([2, 1, 0]).astype(self.gt_feed_type)
             else:
                 gt = np.zeros(image.shape, self.gt_feed_type)
+            self.shapes[data] = image.shape
             self.numpy_images[data] = data_split(image)
             self.numpy_gts[data] = data_split(gt)
 
         self.numpy_images.clear()
         self.numpy_gts.clear()
+        self.shapes.clear()
         pool = threadpool.ThreadPool(self.params['loadThreadNum'])
         reqs = threadpool.makeRequests(load_numpy_data, self.data_list)
         for req in reqs:
@@ -130,6 +134,7 @@ class DataManager:
         pool.wait()
 
     def write_result(self, result, name):
+        result = self.reshape_to_sitk_image(result, name, 'gt')
         result = result.transpose([2, 1, 0])
         result = result > 0.5
         sitk_result = sitk.GetImageFromArray(result.astype(np.uint8))
@@ -138,3 +143,32 @@ class DataManager:
         filename, _ = os.path.splitext(name)
         writer.SetFileName(os.path.join(self.src_dir, filename, 'result.nii.gz'))
         writer.Execute(sitk_result)
+
+    def reshape_to_sitk_image(self, data, name, type_='gt'):
+        image_width, image_height, image_depth = self.shapes[name]
+        vol_width, vol_height, vol_depth = self.params['VolSize']
+        width_step = image_width // vol_width
+        depth_step = int(np.ceil(image_depth / vol_depth))
+        width_step = image_width // vol_width
+        depth_remain = image_depth % vol_depth
+        depth_step = int(np.ceil(image_depth / vol_depth))
+
+        if type_ == 'gt':
+            dtype = self.gt_feed_type
+        elif type_ == 'image':
+            dtype = self.image_feed_type
+        sitk_image = np.zeros((image_width, image_height, image_depth), dtype)
+
+        for num, image in enumerate(data):
+
+            ystart = (num % width_step) * vol_width
+            xstart = (num // (width_step * depth_step)) * vol_height
+            _zstart = num // width_step % depth_step
+            zstart = _zstart * vol_depth if _zstart != depth_step - 1 else image_depth - vol_depth
+            sitk_image[ystart:ystart+vol_width, xstart:xstart+vol_height, zstart:zstart+vol_depth] += image
+
+        if depth_remain:
+            # print(image_depth - vol_depth, image_depth - depth_remain, image_depth, vol_depth)
+            sitk_image[:, :, (image_depth - vol_depth):(image_depth - depth_remain)] = sitk_image[:, :, (image_depth - vol_depth):(image_depth - depth_remain)] / 2
+
+        return sitk_image

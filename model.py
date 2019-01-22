@@ -70,7 +70,6 @@ class Model(object):
         for num, (image_block, gt_block) in enumerate(zip(numpy_image, numpy_gt)):
             image_block = image_block.reshape(1, 1, *vol_shape)
             gt_block = gt_block.reshape(1, 1, *vol_shape)
-        # batch_size = manager.params['batchsize']
         # for num in range(0, numpy_gt.shape[0], batch_size):
         #     image_block = numpy_image[num:num+batch_size].reshape(-1, 1, *vol_shape)
         #     gt_block = numpy_gt[num:num+batch_size].reshape(-1, 1, *vol_shape)
@@ -162,16 +161,19 @@ class Model(object):
             weight_decay=self.params['weight_decay'],
         )
 
-        if snapshot:
-            for group in optimizer.param_groups:
-                group.setdefault('initial_lr', self.params['baseLR'])
-
+        t_max = max(
+            200, round(self.dataManagerTrain.data_num / self.dataManagerTrain.batch_size * 8, 2)
+        )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer,
-            T_max=100,
-            last_epoch=snapshot-1,
+            T_max=t_max,
             eta_min=self.params['minLR']
         )
+        scheduler.last_epoch = snapshot - 1
+
+        self.logger.info('Create scheduler max lr: {} min lr: {} Tmax: {}'.format(
+            self.params['baseLR'], self.params['minLR'], t_max
+        ))
         self.logger.info("Run {}".format(net.net_name))
 
         for iteration in range(1, nr_iter+1):
@@ -199,7 +201,7 @@ class Model(object):
                 temp_accuracy = 0
                 temp_loss = 0
 
-            if not iteration % val_interval:
+            if not iteration % val_interval or iteration is 1:
                 val_loss, val_accuracy = self.all_predict(net, silent=False)
                 if val_accuracy > self.max_accuracy:
                     self.max_accuracy = val_accuracy
@@ -233,7 +235,6 @@ class Model(object):
             optimizer.zero_grad()
             loss.backward()
             scheduler.step()
-            # scheduler.step(loss)
             optimizer.step()
 
     def test(self):
@@ -253,7 +254,7 @@ class Model(object):
         checkpoint = torch.load(name)
         net.load_state_dict(checkpoint['state_dict'])
         net.cuda()
-        loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=False)
+        loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=True)
         self.logger.info('testing: loss: {:.7f} accuracy: {:.5%}'.format(loss, accuracy))
 
     def try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, beta=0.9):
