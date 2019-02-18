@@ -3,7 +3,7 @@ from __future__ import division, print_function
 import os
 import time
 from itertools import product
-
+import math
 import numpy as np
 import torch
 import torch.nn as nn
@@ -16,6 +16,12 @@ from logger import Logger
 from vnet import VNet as Net
 import matplotlib.pyplot as plt
 
+
+class RewarmCosineAnnealingLR(torch.optim.lr_scheduler.CosineAnnealingLR):
+    def get_lr(self):
+        return [self.eta_min + (base_lr - self.eta_min) *
+                (1 + math.cos(math.pi * (self.last_epoch % self.T_max) / self.T_max)) / 2
+                for base_lr in self.base_lrs]
 
 class Model(object):
     ''' the network model for training, validation and testing '''
@@ -145,10 +151,6 @@ class Model(object):
 
         temp_loss = 0
         temp_accuracy = 0
-
-        net.train()
-        net.cuda()
-
         # optimizer = optim.Adam(
         #     net.parameters(),
         #     weight_decay=self.params['weight_decay'],
@@ -161,10 +163,13 @@ class Model(object):
             weight_decay=self.params['weight_decay'],
         )
 
+        net.train()
+        net.cuda()
+
         t_max = max(
             200, round(self.dataManagerTrain.data_num / self.dataManagerTrain.batch_size * 8, 2)
         )
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        scheduler = RewarmCosineAnnealingLR(
             optimizer,
             T_max=t_max,
             eta_min=self.params['minLR']
@@ -257,12 +262,11 @@ class Model(object):
         loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=True)
         self.logger.info('testing: loss: {:.7f} accuracy: {:.5%}'.format(loss, accuracy))
 
-    def try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, beta=0.9):
+    def try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
         def update_lr(optimizer, lr):
             for group in optimizer.param_groups:
                 group['lr'] = lr
 
-        num = 50
         factor = (end_lr / start_lr) ** (1 / num)
         lr = start_lr
         avg_loss = 0.
@@ -303,7 +307,7 @@ class Model(object):
                 plt.plot(log_lrs, losses)
                 plt.savefig('find_lr.{}.{}.jpg'.format(start_lr, end_lr))
 
-    def find_lr(self, start_lr=1e-7, end_lr=10.0, beta=0.95):
+    def find_lr(self, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
         self.dataManagerTrain = data_manager.DataManager(
             self.params['dirTrain'], 
             self.params['dirResult'],
@@ -324,4 +328,4 @@ class Model(object):
             momentum=0.9,
             weight_decay=self.params['weight_decay'],
         )
-        self.try_lr(net, optimizer, start_lr, end_lr, beta)
+        self.try_lr(net, optimizer, start_lr, end_lr, num, beta)

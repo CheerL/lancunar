@@ -39,8 +39,8 @@ if __name__ == '__main__':
         model_params['minLR'] = 1e-6  # the learning rate, initial one
     elif model_params['loss'] == 'dice':
         # for dice loss
-        model_params['baseLR'] = 5e-2  # the learning rate, initial one
-        model_params['minLR'] = 5e-6  # the learning rate, initial one
+        model_params['baseLR'] = 1  # the learning rate, initial one
+        model_params['minLR'] = 1e-4  # the learning rate, initial one
 
     # params of the DataManager
     data_manager_params['feedThreadNum'] = 8  # the number of threads to do data augmentation
@@ -62,4 +62,4 @@ if __name__ == '__main__':
         model.test() # test model, the snapnumber is the number of the model snapshot
 
     if '-lr' in sys.argv:
-        model.find_lr(1e-5, 1000, 0.9)
+        model.find_lr(1e-5, 100, 200, 0.5)
