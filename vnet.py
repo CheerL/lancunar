@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from net import BasicNet
 
 
 def passthrough(x, **kwargs):
@@ -104,7 +105,7 @@ class OutputTransition(nn.Module):
         return out
 
 
-class VNet(nn.Module):
+class VNet(BasicNet):
     # the number of convolutions in each layer corresponds
     # to what is in the actual prototxt, not the intent
     def __init__(self, loss_type='nll', elu=False):
@@ -134,26 +135,3 @@ class VNet(nn.Module):
 
         out = self.out_tr(out)
         return out
-
-    @staticmethod
-    def dice_loss(output, target):
-        smooth = 0.001
-        # onehot = torch.zeros(target.numel(), 2, dtype=torch.float)
-        # onehot = onehot.scatter_(1, target.cpu().view(-1, 1), 1).cuda()
-        # loss = 1 - (2 * (output * onehot).sum() + smooth) / (output.sum() + onehot.sum() + smooth)
-        pred = output[:, 1]
-        target = target.float()
-        loss = 1 - (2 * (pred * target).sum() + smooth) / (pred.sum() + target.sum() + smooth)
-        return loss
-
-    @staticmethod
-    def nll_loss(output, target):
-        return F.nll_loss(output, target)
-
-    @staticmethod
-    def dice_similarity_coefficient(pred, target):
-        pass
-
-    @staticmethod
-    def sensitivity(pred, target):
-        pass

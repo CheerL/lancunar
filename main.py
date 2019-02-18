@@ -17,7 +17,7 @@ if __name__ == '__main__':
     model_params['snapshot'] = 0 #39000 #85000
     model_params['dirTrain'] = 'data/Lancunar/Lacunar_training/' # the directory of training data
     model_params['dirValidation'] = 'data/Lancunar/Lacunar_validation/' # the directory of training data
-    model_params['dirTest']='data/Lancunar/Lacunar_testing/' #the directory of the testing data
+    model_params['dirTest'] = 'data/Lancunar/Lacunar_testing/' #the directory of the testing data
     # model_params['dirTrain'] = '../CMB/mini_training/' # the directory of training data
     # model_params['dirValidation']='../CMB/mini_validation/' #the directory of the validation data
     # model_params['dirTest']='../CMB/mini_testing/' #the directory of the testing data
@@ -45,7 +45,7 @@ if __name__ == '__main__':
     # params of the DataManager
     data_manager_params['feedThreadNum'] = 8  # the number of threads to do data augmentation
     data_manager_params['loadThreadNum'] = 64
-    data_manager_params['VolSize'] = (64, 64, 4) # the size of the crop image
+    data_manager_params['VolSize'] = (128, 128, 1) # the size of the crop image
     data_manager_params['batchsize'] = 128  # the batch size
     data_manager_params['MaxEmpty'] = 1
     data_manager_params['dataQueueSize'] = 20
