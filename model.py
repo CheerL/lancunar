@@ -11,9 +11,11 @@ import torch.nn.functional as F
 import torch.nn.init as init
 import torch.optim as optim
 
-import data_manager
+from data_manager import DataManager
+# from data_manager import DataManager2D as DataManager
 from logger import Logger
 from vnet import VNet as Net
+# from unet import UNet as Net
 import matplotlib.pyplot as plt
 
 
@@ -23,7 +25,7 @@ class RewarmCosineAnnealingLR(torch.optim.lr_scheduler.CosineAnnealingLR):
                 (1 + math.cos(math.pi * (self.last_epoch % self.T_max) / self.T_max)) / 2
                 for base_lr in self.base_lrs]
 
-class Model(object):
+class Model:
     ''' the network model for training, validation and testing '''
     dataManagerTrain = None
     dataManagerValidation = None
@@ -76,15 +78,12 @@ class Model(object):
         for num, (image_block, gt_block) in enumerate(zip(numpy_image, numpy_gt)):
             image_block = image_block.reshape(1, 1, *vol_shape)
             gt_block = gt_block.reshape(1, 1, *vol_shape)
-        # for num in range(0, numpy_gt.shape[0], batch_size):
-        #     image_block = numpy_image[num:num+batch_size].reshape(-1, 1, *vol_shape)
-        #     gt_block = numpy_gt[num:num+batch_size].reshape(-1, 1, *vol_shape)
 
             data = torch.tensor(image_block).cuda().float()
             target = torch.tensor(gt_block).cuda().view(-1)
             # volatile is used in the input variable for the inference,
-            # which indicates the network doesn't need the gradients, and this flag will transfer to other variable
-            # as the network computating
+            # which indicates the network doesn't need the gradients,
+            # and this flag will transfer to other variable as the network computating
             output = net(data)
             pred = output.max(1)[1].view(*vol_shape)
             result[num] = pred.cpu().numpy()
@@ -106,7 +105,7 @@ class Model(object):
         name = prefix_save + str(state['iteration']) + '_' + filename
         torch.save(state, name)
 
-    def weights_init(self, m):
+    def _weights_init(self, m):
         ''' initialize the model'''
         classname = m.__class__.__name__
         if classname.find('Conv3d') != -1:
@@ -120,13 +119,13 @@ class Model(object):
         train_interval = self.params['trainInterval']
         val_interval = self.params['valInterval']
 
-        self.dataManagerTrain = data_manager.DataManager(
-            self.params['dirTrain'], 
+        self.dataManagerTrain = DataManager(
+            self.params['dirTrain'],
             self.params['dirResult'],
             self.params['dataManager']
         )
-        self.dataManagerValidation = data_manager.DataManager(
-            self.params['dirValidation'], 
+        self.dataManagerValidation = DataManager(
+            self.params['dirValidation'],
             self.params['dirResult'],
             self.params['dataManager']
         )
@@ -147,7 +146,7 @@ class Model(object):
             net.load_state_dict(checkpoint['state_dict'])
             self.logger.info("loaded checkpoint " + str(self.params['snapshot']))
         else:
-            net.apply(self.weights_init)
+            net.apply(self._weights_init)
 
         temp_loss = 0
         temp_accuracy = 0
@@ -187,7 +186,6 @@ class Model(object):
             target = torch.tensor(batch_gt).cuda().view(-1)
 
             output = net(data)
-
             loss = net.loss(output, target)
             flatten = output.max(1)[1].view(-1)  # get the index of the max log-probability
             temp_loss += loss.cpu().item()
@@ -219,23 +217,23 @@ class Model(object):
                     self.best_iteration_loss = real_iteration
 
                 self.save_checkpoint({'iteration': real_iteration,
-                                        'state_dict': net.state_dict(),
-                                        'best_acc': self.best_iteration_loss == real_iteration},
-                                        self.params['dirSnapshots'],
-                                        self.params['tailSnapshots'])
+                                      'state_dict': net.state_dict(),
+                                      'best_acc': self.best_iteration_loss == real_iteration},
+                                      self.params['dirSnapshots'],
+                                      self.params['tailSnapshots'])
 
                 self.logger.info(
                     "validating: iteration: {} loss: {:.7f} accuracy: {:.5%}".format(
                         real_iteration, val_loss, val_accuracy
-                ))
+                    ))
                 self.logger.info(
                     "validating: best_acc: {} loss: {:.7f} accuracy: {:.5%}".format(
                         self.best_iteration_acc, self.max_accuracy_loss, self.max_accuracy
-                ))
+                    ))
                 self.logger.info(
                     "validating: best_loss: {} loss: {:.7f} accuracy: {:.5%}".format(
                         self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
-                ))
+                    ))
 
             optimizer.zero_grad()
             loss.backward()
@@ -243,7 +241,7 @@ class Model(object):
             optimizer.step()
 
     def test(self):
-        self.dataManagerTest = data_manager.DataManager(
+        self.dataManagerTest = DataManager(
             self.params['dirTest'],
             self.params['dirResult'],
             self.params['dataManager'],
@@ -262,7 +260,7 @@ class Model(object):
         loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=True)
         self.logger.info('testing: loss: {:.7f} accuracy: {:.5%}'.format(loss, accuracy))
 
-    def try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
+    def _try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
         def update_lr(optimizer, lr):
             for group in optimizer.param_groups:
                 group['lr'] = lr
@@ -301,15 +299,18 @@ class Model(object):
             loss.backward()
             optimizer.step()
             #Update the lr for the next step
-            self.logger.info('lr: {}, log lr: {:.4f}, loss: {:.7f}, best loss: {:.7f}'.format(lr, log_lr, smoothed_loss, best_loss))
+            self.logger.info(
+                'lr: {}, log lr: {:.4f}, loss: {:.7f}, best loss: {:.7f}'.format(
+                    lr, log_lr, smoothed_loss, best_loss
+                ))
             lr *= factor
             if not iteration % 10 or iteration == num:
                 plt.plot(log_lrs, losses)
                 plt.savefig('find_lr.{}.{}.jpg'.format(start_lr, end_lr))
 
     def find_lr(self, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
-        self.dataManagerTrain = data_manager.DataManager(
-            self.params['dirTrain'], 
+        self.dataManagerTrain = DataManager(
+            self.params['dirTrain'],
             self.params['dirResult'],
             self.params['dataManager']
         )
@@ -317,7 +318,7 @@ class Model(object):
         self.dataManagerTrain.run_feed_thread()
         # create the network
         net = Net(loss_type=self.params['loss'])
-        net.apply(self.weights_init)
+        net.apply(self._weights_init)
 
         net.train()
         net.cuda()
@@ -328,4 +329,4 @@ class Model(object):
             momentum=0.9,
             weight_decay=self.params['weight_decay'],
         )
-        self.try_lr(net, optimizer, start_lr, end_lr, num, beta)
+        self._try_lr(net, optimizer, start_lr, end_lr, num, beta)

@@ -33,9 +33,10 @@ class DataManager:
         self.run_load_thread()
 
     def _feed_data_shuffle_thread(self, pos_queue):
+        dim = tuple(range(1, len(self.params['VolSize'])+1))
         true_pos = list()
         for data, gt in self.numpy_gts.items():
-            for pos in np.where(gt.any((1, 2, 3)) == True)[0]:
+            for pos in np.where(gt.any(dim) == True)[0]:
                 true_pos.append((data, pos))
 
         true_num = len(true_pos)
@@ -48,10 +49,8 @@ class DataManager:
             false_num_list = false_num_list * false_num / false_num_list.sum()
 
             for i, (data, gt) in enumerate(self.numpy_gts.items()):
-                for pos in np.random.choice(np.where(
-                    gt.any((1, 2, 3)) == False)[0],
-                    int(round(false_num_list[i]
-                ))):
+                gt_ture_list = np.where(gt.any(dim) == False)[0]
+                for pos in np.random.choice(gt_ture_list, int(round(false_num_list[i]))):
                     false_pos.append((data, pos))
             pos_list = true_pos + false_pos
             np.random.shuffle(pos_list)
@@ -105,7 +104,6 @@ class DataManager:
                 index_b = [slice(num) for num in image.shape]
                 index_b[k] = slice(-j, i)
                 image = np.concatenate((image[tuple(index_a)], image[tuple(index_b)]), k)
-                print(k, i, j)
 
         for i in range(3):
             image = np.array(np.split(image, image.shape[-i] // self.params['VolSize'][-i], -i))
@@ -164,11 +162,18 @@ class DataManager:
             xstart = (num // (width_step * depth_step)) * vol_height
             _zstart = num // width_step % depth_step
             zstart = _zstart * vol_depth if _zstart != depth_step - 1 else image_depth - vol_depth
-            sitk_image[ystart:ystart+vol_width, xstart:xstart+vol_height, zstart:zstart+vol_depth] += image
+            sitk_image[
+                ystart:ystart+vol_width,
+                xstart:xstart+vol_height,
+                zstart:zstart+vol_depth
+                ] += image
 
         if depth_remain:
-            # print(image_depth - vol_depth, image_depth - depth_remain, image_depth, vol_depth)
-            sitk_image[:, :, (image_depth - vol_depth):(image_depth - depth_remain)] = sitk_image[:, :, (image_depth - vol_depth):(image_depth - depth_remain)] / 2
+            sitk_image[
+                :, :, (image_depth - vol_depth):(image_depth - depth_remain)
+            ] = sitk_image[
+                :, :, (image_depth - vol_depth):(image_depth - depth_remain)
+            ] / 2
 
         return sitk_image
 
@@ -200,8 +205,6 @@ class DataManager2D(DataManager):
         height_step = int(np.ceil(image_height / vol_height))
         height_remain = image_height % vol_height
         depth_step = image_depth
-        print(width_step, height_step, depth_step)
-        print(width_remain, height_remain)
         if type_ == 'gt':
             dtype = self.gt_feed_type
         elif type_ == 'image':

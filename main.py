@@ -45,8 +45,8 @@ if __name__ == '__main__':
     # params of the DataManager
     data_manager_params['feedThreadNum'] = 8  # the number of threads to do data augmentation
     data_manager_params['loadThreadNum'] = 64
-    data_manager_params['VolSize'] = (128, 128, 1) # the size of the crop image
-    data_manager_params['batchsize'] = 128  # the batch size
+    data_manager_params['VolSize'] = (64, 64, 4) # the size of the crop image
+    data_manager_params['batchsize'] = 32  # the batch size
     data_manager_params['MaxEmpty'] = 1
     data_manager_params['dataQueueSize'] = 20
 
