@@ -15,6 +15,15 @@ class BasicNet(nn.Module):
         return F.nll_loss(output, target)
 
     @staticmethod
+    def iou(pred, target):
+        smooth = 0.001
+        true_pred = pred[:, 1].float()
+        intersection = true_pred[target == 1].sum()
+        union = true_pred.sum() + target.float().sum() - intersection
+        # print(intersection + smooth, union + smooth, (intersection + smooth) / (union + smooth))
+        return (intersection + smooth) / (union + smooth)
+
+    @staticmethod
     def dice_similarity_coefficient(pred, target):
         pass
 

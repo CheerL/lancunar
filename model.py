@@ -20,9 +20,14 @@ import matplotlib.pyplot as plt
 
 
 class RewarmCosineAnnealingLR(torch.optim.lr_scheduler.CosineAnnealingLR):
+    def get_period(self):
+        return int(math.log2(self.last_epoch / self.T_max + 1))
+
     def get_lr(self):
+        period = self.get_period()
+        T_period = self.T_max ** period
         return [self.eta_min + (base_lr - self.eta_min) *
-                (1 + math.cos(math.pi * (self.last_epoch % self.T_max) / self.T_max)) / 2
+                (1 + math.cos(math.pi * (self.last_epoch - T_period + 1) / T_period)) / 2
                 for base_lr in self.base_lrs]
 
 class Model:
@@ -50,22 +55,24 @@ class Model:
 
         loss_list = list()
         accuracy_list = list()
+        iou_list = list()
         for data in manager.data_list:
             image = manager.numpy_images[data]
             gt = manager.numpy_gts[data]
-            result, loss, accuracy = self.predict(net, manager, image, gt)
+            result, loss, accuracy, iou = self.predict(net, manager, image, gt)
             loss_list.append(loss)
             accuracy_list.append(accuracy)
+            iou_list.append(iou)
 
             if not silent:
-                self.logger.info("{}: name: {} loss: {:.7f} acc: {:.5%} predict: {} gt: {}".format(
-                    run_type, data, loss, accuracy, result.sum(), gt.sum()
+                self.logger.info("{}: name: {} loss: {:.7f} acc: {:.5%}, iou: {:.5%} predict: {} gt: {}".format(
+                    run_type, data, loss, accuracy, iou, result.sum(), gt.sum()
                 ))
 
             if save:
                 manager.write_result(result, data)
 
-        return np.mean(loss_list), np.mean(accuracy_list)
+        return np.mean(loss_list), np.mean(accuracy_list), np.mean(iou_list)
 
     def predict(self, net, manager, numpy_image, numpy_gt, call_loss=True):
         ''' produce the segmentation result, one time one image'''
@@ -73,7 +80,7 @@ class Model:
         vol_shape = manager.params['VolSize']
         result = np.zeros(numpy_gt.shape, dtype=manager.gt_feed_type)
         all_loss = list()
-
+        all_iou = list()
         # crop the image
         for num, (image_block, gt_block) in enumerate(zip(numpy_image, numpy_gt)):
             image_block = image_block.reshape(1, 1, *vol_shape)
@@ -89,14 +96,19 @@ class Model:
             result[num] = pred.cpu().numpy()
             # pred = output.max(1)[1].view(-1, *vol_shape)
             # result[num:num+batch_size] = pred.cpu().numpy()
+            block_iou = net.iou(output, target).cpu().item()
+
+            if gt_block.any():
+                all_iou.append(block_iou)
 
             if call_loss:
                 block_loss = net.loss(output, target).cpu().item()
                 all_loss.append(block_loss)
 
+        iou = np.mean(all_iou) if all_iou else 0
         loss = np.mean(all_loss)
         accuracy = np.mean(result == numpy_gt)
-        return result, loss, accuracy
+        return result, loss, accuracy, iou
 
 
     def save_checkpoint(self, state, path, prefix, filename='checkpoint.pth.tar'):
@@ -150,6 +162,7 @@ class Model:
 
         temp_loss = 0
         temp_accuracy = 0
+        temp_iou = 0
         # optimizer = optim.Adam(
         #     net.parameters(),
         #     weight_decay=self.params['weight_decay'],
@@ -168,12 +181,15 @@ class Model:
         t_max = max(
             200, round(self.dataManagerTrain.data_num / self.dataManagerTrain.batch_size * 8, 2)
         )
-        scheduler = RewarmCosineAnnealingLR(
-            optimizer,
-            T_max=t_max,
-            eta_min=self.params['minLR']
+        # scheduler = RewarmCosineAnnealingLR(
+        #     optimizer,
+        #     T_max=t_max,
+        #     eta_min=self.params['minLR']
+        # )
+        # scheduler.last_epoch = snapshot - 1
+        scheduler = torch.optim.lr_scheduler.ExponentialLR(
+            optimizer, 0.9 ** 0.0025
         )
-        scheduler.last_epoch = snapshot - 1
 
         self.logger.info('Create scheduler max lr: {} min lr: {} Tmax: {}'.format(
             self.params['baseLR'], self.params['minLR'], t_max
@@ -190,22 +206,25 @@ class Model:
             flatten = output.max(1)[1].view(-1)  # get the index of the max log-probability
             temp_loss += loss.cpu().item()
             temp_accuracy += flatten.eq(target).float().mean().cpu().item()
+            temp_iou += net.iou(output, target)
 
             real_iteration = snapshot + iteration
             if not iteration % train_interval:
                 train_accuracy = temp_accuracy / train_interval
                 train_loss = temp_loss / train_interval
+                train_iou = temp_iou / train_interval
                 self.logger.info(
-                    "training: iter: {} loss: {:.7f} acc: {:.5%}".format(
+                    "training: iter: {} loss: {:.7f} acc: {:.5%}, iou: {:.5%}".format(
                         real_iteration,
                         train_loss,
-                        train_accuracy
+                        train_accuracy,
+                        train_iou
                     ))
                 temp_accuracy = 0
                 temp_loss = 0
 
             if not iteration % val_interval or iteration is 1:
-                val_loss, val_accuracy = self.all_predict(net, silent=False)
+                val_loss, val_accuracy, val_iou = self.all_predict(net, silent=False)
                 if val_accuracy > self.max_accuracy:
                     self.max_accuracy = val_accuracy
                     self.max_accuracy_loss = val_loss
@@ -219,12 +238,12 @@ class Model:
                 self.save_checkpoint({'iteration': real_iteration,
                                       'state_dict': net.state_dict(),
                                       'best_acc': self.best_iteration_loss == real_iteration},
-                                      self.params['dirSnapshots'],
-                                      self.params['tailSnapshots'])
+                                     self.params['dirSnapshots'],
+                                     self.params['tailSnapshots'])
 
                 self.logger.info(
-                    "validating: iteration: {} loss: {:.7f} accuracy: {:.5%}".format(
-                        real_iteration, val_loss, val_accuracy
+                    "validating: iteration: {} loss: {:.7f} accuracy: {:.5%}, iou: {:.5%}".format(
+                        real_iteration, val_loss, val_accuracy, val_iou
                     ))
                 self.logger.info(
                     "validating: best_acc: {} loss: {:.7f} accuracy: {:.5%}".format(
@@ -257,8 +276,8 @@ class Model:
         checkpoint = torch.load(name)
         net.load_state_dict(checkpoint['state_dict'])
         net.cuda()
-        loss, accuracy = self.all_predict(net, run_type='testing', silent=False, save=True)
-        self.logger.info('testing: loss: {:.7f} accuracy: {:.5%}'.format(loss, accuracy))
+        loss, accuracy, iou = self.all_predict(net, run_type='testing', silent=False, save=True)
+        self.logger.info('testing: loss: {:.7f}, accuracy: {:.5%}, iou: {:.5%}'.format(loss, accuracy, iou))
 
     def _try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
         def update_lr(optimizer, lr):

@@ -49,8 +49,8 @@ class DataManager:
             false_num_list = false_num_list * false_num / false_num_list.sum()
 
             for i, (data, gt) in enumerate(self.numpy_gts.items()):
-                gt_ture_list = np.where(gt.any(dim) == False)[0]
-                for pos in np.random.choice(gt_ture_list, int(round(false_num_list[i]))):
+                gt_true_list = np.where(gt.any(dim) == False)[0]
+                for pos in np.random.choice(gt_true_list, int(round(false_num_list[i]))):
                     false_pos.append((data, pos))
             pos_list = true_pos + false_pos
             np.random.shuffle(pos_list)
@@ -62,8 +62,8 @@ class DataManager:
         ''' the thread worker to prepare the training data'''
         data_size = (self.batch_size, 1) + self.params['VolSize']
         while True:
-            image_list = []
-            gt_list = []
+            image_list = list()
+            gt_list = list()
             for _ in range(self.batch_size):
                 key, pos = pos_queue.get()
                 image = self.numpy_images[key][pos]

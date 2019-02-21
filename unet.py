@@ -80,7 +80,7 @@ class up(nn.Module):
 
 
 class outconv(nn.Module):
-    '''conv'''
+    '''conv => tranpose => flatten'''
     def __init__(self, in_ch, out_ch):
         super(outconv, self).__init__()
         self._out_ch = out_ch
@@ -88,6 +88,7 @@ class outconv(nn.Module):
 
     def forward(self, x):
         x = self.conv(x)
+        x = x.permute(0, 2, 3, 1).contiguous()
         return x.view(-1, self._out_ch)
 
 class UNet(BasicNet):
