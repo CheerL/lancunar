@@ -11,15 +11,15 @@ import torch.nn.functional as F
 import torch.nn.init as init
 import torch.optim as optim
 
-from data_manager import DataManager
-# from data_manager import DataManager2D as DataManager
+# from data_manager import DataManager
+from data_manager import DataManager2D as DataManager
 from logger import Logger
-from vnet import VNet as Net
-# from unet import UNet as Net
+# from vnet import VNet as Net
+from unet import UNet as Net
 import matplotlib.pyplot as plt
 
 
-class RewarmCosineAnnealingLR(torch.optim.lr_scheduler.CosineAnnealingLR):
+class RewarmCosineAnnealingLR(optim.lr_scheduler.CosineAnnealingLR):
     def get_period(self):
         return int(math.log2(self.last_epoch / self.T_max + 1))
 
@@ -81,19 +81,25 @@ class Model:
         result = np.zeros(numpy_gt.shape, dtype=manager.gt_feed_type)
         all_loss = list()
         all_iou = list()
+        batch_size = manager.params['batchsize']
+        size = len(numpy_image)
         # crop the image
-        for num, (image_block, gt_block) in enumerate(zip(numpy_image, numpy_gt)):
-            image_block = image_block.reshape(1, 1, *vol_shape)
-            gt_block = gt_block.reshape(1, 1, *vol_shape)
+        for start in range(0, size, batch_size):
+            end = min(start + batch_size, size)
+            image_block = numpy_image[start:end].reshape(-1, 1, *vol_shape)
+            gt_block = numpy_gt[start:end].reshape(-1, 1, *vol_shape)
+        # for num, (image_block, gt_block) in enumerate(zip(numpy_image, numpy_gt)):
+            # image_block = image_block.reshape(1, 1, *vol_shape)
+            # gt_block = gt_block.reshape(1, 1, *vol_shape)
 
-            data = torch.tensor(image_block).cuda().float()
-            target = torch.tensor(gt_block).cuda().view(-1)
+            data = torch.Tensor(image_block).cuda().float()
+            target = torch.Tensor(gt_block).cuda().long().view(-1)
             # volatile is used in the input variable for the inference,
             # which indicates the network doesn't need the gradients,
             # and this flag will transfer to other variable as the network computating
             output = net(data)
-            pred = output.max(1)[1].view(*vol_shape)
-            result[num] = pred.cpu().numpy()
+            pred = output.max(1)[1].view(-1, *vol_shape)
+            result[start:end] = pred.cpu().numpy()
             # pred = output.max(1)[1].view(-1, *vol_shape)
             # result[num:num+batch_size] = pred.cpu().numpy()
             block_iou = net.iou(output, target).cpu().item()
@@ -181,29 +187,26 @@ class Model:
         t_max = max(
             200, round(self.dataManagerTrain.data_num / self.dataManagerTrain.batch_size * 8, 2)
         )
-        # scheduler = RewarmCosineAnnealingLR(
-        #     optimizer,
-        #     T_max=t_max,
-        #     eta_min=self.params['minLR']
-        # )
-        # scheduler.last_epoch = snapshot - 1
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(
-            optimizer, 0.9 ** 0.0025
+        scheduler = RewarmCosineAnnealingLR(
+            optimizer,
+            T_max=t_max,
+            eta_min=self.params['minLR']
         )
+        # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, self.params['expgamma'])
+        scheduler.last_epoch = snapshot - 1
 
         self.logger.info('Create scheduler max lr: {} min lr: {} Tmax: {}'.format(
             self.params['baseLR'], self.params['minLR'], t_max
         ))
-        self.logger.info("Run {}".format(net.net_name))
+        self.logger.info('Run {}'.format(net.net_name))
 
         for iteration in range(1, nr_iter+1):
             batch_image, batch_gt = self.dataManagerTrain.data_queue.get()
-            data = torch.tensor(batch_image).cuda().float()
-            target = torch.tensor(batch_gt).cuda().view(-1)
-
+            data = torch.Tensor(batch_image).cuda().float()
+            target = torch.Tensor(batch_gt).cuda().long().view(-1)
             output = net(data)
             loss = net.loss(output, target)
-            flatten = output.max(1)[1].view(-1)  # get the index of the max log-probability
+            flatten = output.max(1)[1].view(-1)
             temp_loss += loss.cpu().item()
             temp_accuracy += flatten.eq(target).float().mean().cpu().item()
             temp_iou += net.iou(output, target)
@@ -222,8 +225,10 @@ class Model:
                     ))
                 temp_accuracy = 0
                 temp_loss = 0
+                temp_iou = 0
 
-            if not iteration % val_interval or iteration is 1:
+            # if not iteration % val_interval or iteration is 1:
+            if not iteration % val_interval:
                 val_loss, val_accuracy, val_iou = self.all_predict(net, silent=False)
                 if val_accuracy > self.max_accuracy:
                     self.max_accuracy = val_accuracy
@@ -294,8 +299,8 @@ class Model:
         for iteration in range(1, num+1):
             update_lr(optimizer, lr)
             batch_image, batch_gt = self.dataManagerTrain.data_queue.get()
-            data = torch.tensor(batch_image).cuda().float()
-            target = torch.tensor(batch_gt).cuda().view(-1)
+            data = torch.Tensor(batch_image).cuda().float()
+            target = torch.Tensor(batch_gt).cuda().long().view(-1)
 
             output = net(data)
             loss = net.loss(output, target)

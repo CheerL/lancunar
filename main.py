@@ -17,4 +17,4 @@ if __name__ == '__main__':
         model.test() # test model, the snapnumber is the number of the model snapshot
 
     if '-lr' in sys.argv:
-        model.find_lr(1e-5, 100, 200, 0.5)
+        model.find_lr(1e-4, 10, 500, 0.8)

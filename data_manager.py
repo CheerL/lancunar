@@ -42,15 +42,14 @@ class DataManager:
         true_num = len(true_pos)
         false_num = int(true_num * self.params['MaxEmpty'])
         self.data_num = true_num + false_num
-
         while True:
             false_pos = list()
             false_num_list = np.random.rand(len(self.data_list))
             false_num_list = false_num_list * false_num / false_num_list.sum()
 
             for i, (data, gt) in enumerate(self.numpy_gts.items()):
-                gt_true_list = np.where(gt.any(dim) == False)[0]
-                for pos in np.random.choice(gt_true_list, int(round(false_num_list[i]))):
+                gt_false_list = np.where(gt.any(dim) == False)[0]
+                for pos in np.random.choice(gt_false_list, int(round(false_num_list[i]))):
                     false_pos.append((data, pos))
             pos_list = true_pos + false_pos
             np.random.shuffle(pos_list)
@@ -91,7 +90,10 @@ class DataManager:
             self._feed_data_feed_thread,
             [(pos_queue) for _ in range(self.params['feedThreadNum'])]
         )
-        shuffle_reqs = threadpool.makeRequests(self._feed_data_shuffle_thread, [(pos_queue)])
+        shuffle_reqs = threadpool.makeRequests(
+            self._feed_data_shuffle_thread,
+            [(pos_queue) for _ in range(self.params['suffleThreadNum'])]
+        )
 
         for req in feed_reqs + shuffle_reqs:
             pool.putRequest(req)
