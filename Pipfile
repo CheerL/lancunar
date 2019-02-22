@@ -10,6 +10,7 @@ torch_win = {file = "https://download.pytorch.org/whl/cu90/torch-1.0.0-cp36-cp36
 torch = {version = "*",sys_platform = "== 'linux'"}
 torchvision = "*"
 threadpool = "*"
+visdom = "*"
 
 [dev-packages]
 pylint = "*"

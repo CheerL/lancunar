@@ -1,34 +1,25 @@
 from __future__ import division, print_function
 
 import os
-import time
-from itertools import product
 import math
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.nn.init as init
 import torch.optim as optim
+import matplotlib.pyplot as plt
 
 # from data_manager import DataManager
 from data_manager import DataManager2D as DataManager
 from logger import Logger
 # from vnet import VNet as Net
 from unet import UNet as Net
-import matplotlib.pyplot as plt
+from visualizer import Visualizer
 
 
 class RewarmCosineAnnealingLR(optim.lr_scheduler.CosineAnnealingLR):
-    def get_period(self):
-        return int(math.log2(self.last_epoch / self.T_max + 1))
-
     def get_lr(self):
-        period = self.get_period()
-        T_period = self.T_max ** period
-        return [self.eta_min + (base_lr - self.eta_min) *
-                (1 + math.cos(math.pi * (self.last_epoch - T_period + 1) / T_period)) / 2
-                for base_lr in self.base_lrs]
+        x = math.pi * (self.last_epoch % self.T_max) / self.T_max
+        return [self.eta_min + (lr - self.eta_min) * (1 + math.cos(x)) / 2 for lr in self.base_lrs]
 
 class Model:
     ''' the network model for training, validation and testing '''
@@ -45,6 +36,7 @@ class Model:
     def __init__(self, params):
         self.params = params
         self.logger = Logger(__name__, self.params['dirLog'])
+        self.vis = Visualizer(self.params['visname'])
 
     def all_predict(self, net, run_type='validation', silent=True, save=False):
         '''get the segmentation loss and accuracy of the validation data '''
@@ -65,7 +57,7 @@ class Model:
             iou_list.append(iou)
 
             if not silent:
-                self.logger.info("{}: name: {} loss: {:.7f} acc: {:.5%}, iou: {:.5%} predict: {} gt: {}".format(
+                self.logger.info("{}: name: {} loss: {:.7f} acc: {:.5%} iou: {:.5%} predict: {} gt: {}".format(
                     run_type, data, loss, accuracy, iou, result.sum(), gt.sum()
                 ))
 
@@ -169,11 +161,6 @@ class Model:
         temp_loss = 0
         temp_accuracy = 0
         temp_iou = 0
-        # optimizer = optim.Adam(
-        #     net.parameters(),
-        #     weight_decay=self.params['weight_decay'],
-        #     lr=self.params['baseLR']
-        # )
         optimizer = optim.SGD(
             net.parameters(),
             lr=self.params['baseLR'],
@@ -183,9 +170,8 @@ class Model:
 
         net.train()
         net.cuda()
-
         t_max = max(
-            200, round(self.dataManagerTrain.data_num / self.dataManagerTrain.batch_size * 8, 2)
+            self.params['min_tmax'], round(self.dataManagerTrain.data_num / self.dataManagerTrain.batch_size * 8, -2)
         )
         scheduler = RewarmCosineAnnealingLR(
             optimizer,
@@ -201,6 +187,7 @@ class Model:
         self.logger.info('Run {}'.format(net.net_name))
 
         for iteration in range(1, nr_iter+1):
+            optimizer.zero_grad()
             batch_image, batch_gt = self.dataManagerTrain.data_queue.get()
             data = torch.Tensor(batch_image).cuda().float()
             target = torch.Tensor(batch_gt).cuda().long().view(-1)
@@ -212,22 +199,31 @@ class Model:
             temp_iou += net.iou(output, target)
 
             real_iteration = snapshot + iteration
+            loss.backward()
+            scheduler.step()
+            optimizer.step()
+
             if not iteration % train_interval:
                 train_accuracy = temp_accuracy / train_interval
                 train_loss = temp_loss / train_interval
                 train_iou = temp_iou / train_interval
                 self.logger.info(
-                    "training: iter: {} loss: {:.7f} acc: {:.5%}, iou: {:.5%}".format(
+                    "training: iter: {} loss: {:.7f} acc: {:.5%} iou: {:.5%}".format(
                         real_iteration,
                         train_loss,
                         train_accuracy,
                         train_iou
                     ))
+                self.vis.plot_many({
+                    'accuracy': train_accuracy,
+                    'loss': train_loss,
+                    'iou': train_iou,
+                    'lr': optimizer.param_groups[0]['lr']
+                }, x_start=snapshot + train_interval, x_step=train_interval)
                 temp_accuracy = 0
                 temp_loss = 0
                 temp_iou = 0
 
-            # if not iteration % val_interval or iteration is 1:
             if not iteration % val_interval:
                 val_loss, val_accuracy, val_iou = self.all_predict(net, silent=False)
                 if val_accuracy > self.max_accuracy:
@@ -247,7 +243,7 @@ class Model:
                                      self.params['tailSnapshots'])
 
                 self.logger.info(
-                    "validating: iteration: {} loss: {:.7f} accuracy: {:.5%}, iou: {:.5%}".format(
+                    "validating: iteration: {} loss: {:.7f} accuracy: {:.5%} iou: {:.5%}".format(
                         real_iteration, val_loss, val_accuracy, val_iou
                     ))
                 self.logger.info(
@@ -258,11 +254,13 @@ class Model:
                     "validating: best_loss: {} loss: {:.7f} accuracy: {:.5%}".format(
                         self.best_iteration_loss, self.min_loss, self.min_loss_accuracy
                     ))
+                self.vis.plot_many({
+                    'val_accuracy': val_accuracy,
+                    'val_loss': val_loss,
+                    'val_iou': val_iou
+                    }, x_start=snapshot + val_interval, x_step=val_interval)
+                net.train()
 
-            optimizer.zero_grad()
-            loss.backward()
-            scheduler.step()
-            optimizer.step()
 
     def test(self):
         self.dataManagerTest = DataManager(
@@ -272,7 +270,7 @@ class Model:
         )
         self.dataManagerTest.load_data()
 
-        net = Net(loss_type=self.params['loss'])
+        net = Net(loss_type=self.params['loss'], dropout=self.params['dropout'])
         prefix_save = os.path.join(
             self.params['dirSnapshots'],
             self.params['tailSnapshots']
@@ -282,7 +280,7 @@ class Model:
         net.load_state_dict(checkpoint['state_dict'])
         net.cuda()
         loss, accuracy, iou = self.all_predict(net, run_type='testing', silent=False, save=True)
-        self.logger.info('testing: loss: {:.7f}, accuracy: {:.5%}, iou: {:.5%}'.format(loss, accuracy, iou))
+        self.logger.info('testing: loss: {:.7f}, accuracy: {:.5%} iou: {:.5%}'.format(loss, accuracy, iou))
 
     def _try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
         def update_lr(optimizer, lr):
@@ -324,7 +322,7 @@ class Model:
             optimizer.step()
             #Update the lr for the next step
             self.logger.info(
-                'lr: {}, log lr: {:.4f}, loss: {:.7f}, best loss: {:.7f}'.format(
+                'lr: {} log lr: {:.4f} loss: {:.7f} best loss: {:.7f}'.format(
                     lr, log_lr, smoothed_loss, best_loss
                 ))
             lr *= factor
