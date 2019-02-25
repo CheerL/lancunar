@@ -7,11 +7,11 @@ import threadpool
 
 
 class DataManager:
-    def __init__(self, src_dir, result_dir, params):
+    def __init__(self, src_dir, result_dir, params, mode='train'):
         self.params = params
         self.src_dir = src_dir
         self.result_dir = result_dir
-
+        self.mode = mode
         self.data_num = 0
         self.batch_size = params['batchsize']
         self.data_list = list()
@@ -25,7 +25,7 @@ class DataManager:
     def create_data_list(self):
         self.data_list = [
             path for path in os.listdir(self.src_dir)
-            if 'img.nii.gz' in os.listdir(os.path.join(self.src_dir, path))
+            if 'extimg.nii.gz' in os.listdir(os.path.join(self.src_dir, path))
         ]
 
     def load_data(self):
@@ -67,9 +67,11 @@ class DataManager:
                 key, pos = pos_queue.get()
                 image = self.numpy_images[key][pos]
                 gt = self.numpy_gts[key][pos]
-                randomi = np.random.randint(4)
-                image = np.rot90(image, randomi)
-                gt = np.rot90(gt, randomi)
+
+                if self.params['random_rotate']:
+                    randomi = np.random.randint(4)
+                    image = np.rot90(image, randomi)
+                    gt = np.rot90(gt, randomi)
 
                 image_list.append(image)
                 gt_list.append(gt)
@@ -112,7 +114,7 @@ class DataManager:
         return image.reshape(-1, *self.params['VolSize'])
 
     def _load_numpy_data(self, data):
-        image_name = os.path.join(self.src_dir, data, 'img.nii.gz')
+        image_name = os.path.join(self.src_dir, data, 'extimg.nii.gz')
         gt_name = os.path.join(self.src_dir, data, 'label.nii.gz')
         image = sitk.GetArrayFromImage(sitk.ReadImage(image_name)).transpose([2, 1, 0]).astype(self.image_feed_type)
         image = image / max(image.max(), 1)
@@ -123,6 +125,10 @@ class DataManager:
         self.shapes[data] = image.shape
         self.numpy_images[data] = self._load_data_split(image)
         self.numpy_gts[data] = self._load_data_split(gt)
+        if self.mode == 'train' and self.params['skip_empty']:
+            pos = np.where((self.numpy_images[data] > 0).mean((1, 2)) > self.params['skip_empty_rate'])
+            self.numpy_images[data] = self.numpy_images[data][pos]
+            self.numpy_gts[data] = self.numpy_gts[data][pos]
 
     def run_load_thread(self):
         self.numpy_images.clear()
@@ -180,9 +186,9 @@ class DataManager:
         return sitk_image
 
 class DataManager2D(DataManager):
-    def __init__(self, src_dir, result_dir, params):
+    def __init__(self, src_dir, result_dir, params, mode='train'):
         assert len(params['VolSize']) == 2
-        super().__init__(src_dir, result_dir, params)
+        super().__init__(src_dir, result_dir, params, mode=mode)
 
     def _load_data_split(self, image):
         for k, (i, j) in enumerate(zip(image.shape[:2], self.params['VolSize'])):

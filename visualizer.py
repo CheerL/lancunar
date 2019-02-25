@@ -32,9 +32,9 @@ class Visualizer(visdom.Visdom):
         for k, v in d.items():
             self.plot(k, v, **kwargs)
 
-    def img_many(self, d):
+    def img_many(self, d, **kwargs):
         for k, v in d.items():
-            self.img(k, v)
+            self.img(k, v, **kwargs)
 
     def plot(self, name, y, x=None, x_start=0, x_step=1, **kwargs):
         '''
@@ -69,6 +69,5 @@ class Visualizer(visdom.Visdom):
         '''
         self.log({'loss':1, 'lr':0.0001})
         '''
-
         self.log_text += ('{time} {info} <br>'.format(time=time.strftime('%m%d_%H%M%S'), info=info))
         self.text(self.log_text, win)

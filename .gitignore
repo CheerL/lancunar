@@ -10,3 +10,4 @@ log/**
 *.ipynb
 *.jpg
 config*.py
+data_bet.sh

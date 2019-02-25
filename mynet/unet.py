@@ -1,15 +1,20 @@
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from net import BasicNet
-from functools import partial
+
+from .base import BasicNet
+
 
 class Indentity(nn.Module):
     def forward(self, x):
         return x
 
+
 class ConvBlock(nn.Module):
     '''(conv => BN => PReLU [=> dropout]) * 2'''
+
     def __init__(self, in_ch, out_ch, dropout=1):
         super().__init__()
         self.conv = nn.Sequential(
@@ -26,6 +31,7 @@ class ConvBlock(nn.Module):
     def forward(self, x):
         return self.conv(x)
 
+
 class DownConvBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dropout=1):
         super().__init__()
@@ -35,6 +41,7 @@ class DownConvBlock(nn.Module):
     def forward(self, x):
         x = self.conv(x)
         return self.pool(x), x
+
 
 class UpConvBlock(nn.Module):
     def __init__(self, in_ch, out_ch, dropout=1):
@@ -50,8 +57,10 @@ class UpConvBlock(nn.Module):
         x = torch.cat([x, skip], dim=1)
         return self.conv(x)
 
+
 class OutConv(nn.Module):
     '''conv => tranpose => flatten'''
+
     def __init__(self, in_ch, out_ch):
         super().__init__()
         self._out_ch = out_ch
@@ -62,8 +71,9 @@ class OutConv(nn.Module):
         x = x.permute(0, 2, 3, 1).contiguous()
         return x.view(-1, self._out_ch)
 
+
 class UNet(BasicNet):
-    def __init__(self, n_channels=1, n_classes=2, dropout=1, loss_type='nll'):
+    def __init__(self, n_channels=1, n_classes=2, dropout=1, loss_type='nll', *args, **kwargs):
         super(UNet, self).__init__()
         if loss_type == 'nll':
             self.softmax = F.log_softmax

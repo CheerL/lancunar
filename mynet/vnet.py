@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from net import BasicNet
+
+from .base import BasicNet
 
 
 def passthrough(x, **kwargs):
@@ -16,7 +17,7 @@ def ELUCons(elu, nchan):
 
 
 class LUConv(nn.Module):
-    def __init__(self, inChans,  outChans, elu):
+    def __init__(self, inChans,  outChans, elu, *args, **kwargs):
         super(LUConv, self).__init__()
         self.relu1 = ELUCons(elu, outChans)
         self.conv1 = nn.Conv3d(inChans, outChans, kernel_size=3, padding=1)
