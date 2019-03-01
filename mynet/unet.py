@@ -13,18 +13,18 @@ class Indentity(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    '''(conv => BN => PReLU [=> dropout]) * 2'''
+    '''(conv => BN => ReLU [=> dropout]) * 2'''
 
     def __init__(self, in_ch, out_ch, dropout=1):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
-            nn.PReLU(out_ch),
+            nn.ReLU(out_ch),
             nn.Dropout2d(dropout) if dropout is not 1 else Indentity(),
             nn.Conv2d(out_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
-            nn.PReLU(out_ch),
+            nn.ReLU(out_ch),
             nn.Dropout2d(dropout) if dropout is not 1 else Indentity()
         )
 

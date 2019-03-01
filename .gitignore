@@ -9,5 +9,6 @@ log/**
 *.pyc
 *.ipynb
 *.jpg
+test*
 config*.py
 data_bet.sh

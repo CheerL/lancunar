@@ -49,7 +49,7 @@ class Visualizer(visdom.Visdom):
         self.line(Y=np.array([y]), X=np.array([x]),
                   win=name,
                   opts=dict(title=name),
-                  update=None if x == x_start else 'append',
+                  update=None if x == x_step else 'append',
                   **kwargs)
         self.index[name] = x + x_step
 

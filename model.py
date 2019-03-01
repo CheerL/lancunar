@@ -11,6 +11,8 @@ import mynet as CNN
 from data_manager import DataManager2D as DataManager
 from logger import Logger
 from visualizer import Visualizer
+# from apex import amp
+# amp_handle = amp.init()
 
 class Model:
     ''' the network model for training, validation and testing '''
@@ -39,15 +41,13 @@ class Model:
         loss_list = list()
         iou_list = list()
         for data in manager.data_list:
-            image = manager.numpy_images[data]
-            gt = manager.numpy_gts[data]
-            result, loss, iou = self.predict(net, manager, image, gt)
+            result, loss, iou, gt_sum = self.predict(net, manager, data)
             loss_list.append(loss)
             iou_list.append(iou)
 
             if not silent:
                 self.logger.info("{}: name: {} loss: {:.7f} iou: {:.5%} predict: {} gt: {}".format(
-                    run_type, data, loss, iou, result.sum(), gt.sum()
+                    run_type, data, loss, iou, result.sum(), gt_sum
                 ))
 
             if save:
@@ -55,37 +55,43 @@ class Model:
 
         return np.mean(loss_list), np.mean(iou_list)
 
-    def predict(self, net, manager, numpy_image, numpy_gt, call_loss=True):
+    def predict(self, net, manager, data):
         ''' produce the segmentation result, one time one image'''
+        image = manager.numpy_images[data]
+        gt = manager.numpy_gts[data]
+        unskip_pos = np.where(manager.pos[data] != manager.SKIP)[0]
+        num_to_pos_func = manager.func[data]
+        size = unskip_pos.size
         vol_shape = manager.params['VolSize']
-        result = np.zeros(numpy_gt.shape, dtype=manager.gt_feed_type)
+        batch_size = manager.params['batchsize']
+        result = np.zeros((manager.pos[data].size, *vol_shape), dtype=manager.gt_feed_type)
         all_loss = list()
         all_iou = list()
-        batch_size = manager.params['batchsize']
-        size = len(numpy_image)
+        gt_sum = 0
 
         for start in range(0, size, batch_size):
             end = min(start + batch_size, size)
-            image_block = numpy_image[start:end].reshape(-1, 1, *vol_shape)
-            gt_block = numpy_gt[start:end].reshape(-1, 1, *vol_shape)
+            pos = unskip_pos[start:end]
+            image_block = np.array([image[num_to_pos_func(num)] for num in pos])
+            gt_block = np.array([gt[num_to_pos_func(num)] for num in pos])
+            # print(image_block.shape, image_block.dtype)
+            # image_block = image[start:end].reshape(-1, 1, *vol_shape)
+            # gt_block = gt[start:end].reshape(-1, 1, *vol_shape)
 
-            data = torch.Tensor(image_block).cuda().float()
+            data = torch.Tensor(image_block).cuda().float().view(-1, 1, *vol_shape)
             target = torch.Tensor(gt_block).cuda().long().view(-1)
             output = net(data)
             pred = output.max(1)[1].view(-1, *vol_shape)
-            result[start:end] = pred.cpu().numpy()
+            result[pos] = pred.cpu().numpy()
             block_iou = net.iou(output, target).cpu().item()
+            block_loss = net.loss(output, target).cpu().item()
+            all_iou.append(block_iou)
+            all_loss.append(block_loss)
+            gt_sum += gt_block.sum()
 
-            if gt_block.any():
-                all_iou.append(block_iou)
-
-            if call_loss:
-                block_loss = net.loss(output, target).cpu().item()
-                all_loss.append(block_loss)
-
-        iou = np.mean(all_iou) if all_iou else 0
+        iou = np.mean(all_iou)
         loss = np.mean(all_loss)
-        return result, loss, iou
+        return result, loss, iou, gt_sum
 
     def save_checkpoint(self, state, path, prefix, filename='checkpoint.pth.tar'):
         ''' save the snapshot'''
@@ -181,10 +187,11 @@ class Model:
             self.params['baseLR'], self.params['minLR'], t_max
         ))
         self.logger.info('Run {}'.format(net.net_name))
+        vol_shape = (-1, 1, *self.train_manager.params['VolSize'])
 
         for iteration in range(1, nr_iter+1):
             batch_image, batch_gt = self.train_manager.data_queue.get()
-            data = torch.Tensor(batch_image).cuda().float()
+            data = torch.Tensor(batch_image).cuda().float().view(*vol_shape)
             target = torch.Tensor(batch_gt).cuda().long().view(-1)
             output = net(data)
             loss = net.loss(output, target)
@@ -192,10 +199,11 @@ class Model:
             temp_iou += net.iou(output, target)
             real_iteration = snapshot + iteration
             optimizer.zero_grad()
+            # with amp_handle.scale_loss(loss, optimizer) as scaled_loss:
+            #     scaled_loss.backward()
             loss.backward()
             scheduler.step()
             optimizer.step()
-            # print(batch_gt.any((1, 2, 3)).mean())
 
             if not iteration % train_interval:
                 train_loss = temp_loss / train_interval
@@ -213,11 +221,10 @@ class Model:
                 }, x_start=snapshot + train_interval, x_step=train_interval)
                 temp_loss = 0
                 temp_iou = 0
-                shape = (-1, 1, *self.train_manager.params['VolSize'])
                 self.vis.img_many({
                     'input': data,
-                    'gt': target.view(*shape),
-                    'pred': output.max(1)[1].view(*shape)
+                    'gt': target.view(*vol_shape),
+                    'pred': output.max(1)[1].view(*vol_shape)
                 })
 
             if not iteration % val_interval:
@@ -293,11 +300,12 @@ class Model:
         best_loss = 0.
         losses = []
         log_lrs = []
+        vol_shape = (-1, 1, *self.train_manager.params['VolSize'])
 
         for iteration in range(1, num+1):
             update_lr(optimizer, lr)
             batch_image, batch_gt = self.train_manager.data_queue.get()
-            data = torch.Tensor(batch_image).cuda().float()
+            data = torch.Tensor(batch_image).cuda().float().view(*vol_shape)
             target = torch.Tensor(batch_gt).cuda().long().view(-1)
 
             output = net(data)
