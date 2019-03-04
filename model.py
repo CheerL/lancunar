@@ -79,7 +79,7 @@ class Model:
             # gt_block = gt[start:end].reshape(-1, 1, *vol_shape)
 
             data = torch.Tensor(image_block).cuda().float().view(-1, 1, *vol_shape)
-            target = torch.Tensor(gt_block).cuda().long().view(-1)
+            target = torch.Tensor(gt_block).cuda().long()
             output = net(data)
             pred = output.max(1)[1].view(-1, *vol_shape)
             result[pos] = pred.cpu().numpy()
@@ -192,7 +192,7 @@ class Model:
         for iteration in range(1, nr_iter+1):
             batch_image, batch_gt = self.train_manager.data_queue.get()
             data = torch.Tensor(batch_image).cuda().float().view(*vol_shape)
-            target = torch.Tensor(batch_gt).cuda().long().view(-1)
+            target = torch.Tensor(batch_gt).cuda().long()
             output = net(data)
             loss = net.loss(output, target)
             temp_loss += loss.cpu().item()
@@ -228,17 +228,17 @@ class Model:
                 })
 
             if not iteration % val_interval:
-                val_loss, val_iou = self.all_predict(
-                    net, silent=False)
-                if val_iou > self.max_iou:
-                    self.max_iou = val_iou
-                    self.max_iou_loss = val_loss
-                    self.best_iteration_iou = real_iteration
+                # val_loss, val_iou = self.all_predict(
+                #     net, silent=False)
+                # if val_iou > self.max_iou:
+                #     self.max_iou = val_iou
+                #     self.max_iou_loss = val_loss
+                #     self.best_iteration_iou = real_iteration
 
-                if val_loss < self.min_loss:
-                    self.min_loss = val_loss
-                    self.min_loss_iou = val_iou
-                    self.best_iteration_loss = real_iteration
+                # if val_loss < self.min_loss:
+                #     self.min_loss = val_loss
+                #     self.min_loss_iou = val_iou
+                #     self.best_iteration_loss = real_iteration
 
                 self.save_checkpoint({'iteration': real_iteration,
                                       'state_dict': net.state_dict(),
@@ -246,23 +246,23 @@ class Model:
                                      self.params['dirSnapshots'],
                                      self.params['tailSnapshots'])
 
-                self.logger.info(
-                    "validating: iteration: {} loss: {:.7f} iou: {:.5%}".format(
-                        real_iteration, val_loss, val_iou
-                    ))
-                self.logger.info(
-                    "validating: best_iou: {} loss: {:.7f} iou: {:.5%}".format(
-                        self.best_iteration_iou, self.max_iou_loss, self.max_iou
-                    ))
-                self.logger.info(
-                    "validating: best_loss: {} loss: {:.7f} iou: {:.5%}".format(
-                        self.best_iteration_loss, self.min_loss, self.min_loss_iou
-                    ))
-                self.vis.plot_many({
-                    'val_loss': val_loss,
-                    'val_iou': val_iou
-                }, x_start=snapshot + val_interval, x_step=val_interval)
-                net.train()
+                # self.logger.info(
+                #     "validating: iteration: {} loss: {:.7f} iou: {:.5%}".format(
+                #         real_iteration, val_loss, val_iou
+                #     ))
+                # self.logger.info(
+                #     "validating: best_iou: {} loss: {:.7f} iou: {:.5%}".format(
+                #         self.best_iteration_iou, self.max_iou_loss, self.max_iou
+                #     ))
+                # self.logger.info(
+                #     "validating: best_loss: {} loss: {:.7f} iou: {:.5%}".format(
+                #         self.best_iteration_loss, self.min_loss, self.min_loss_iou
+                #     ))
+                # self.vis.plot_many({
+                #     'val_loss': val_loss,
+                #     'val_iou': val_iou
+                # }, x_start=snapshot + val_interval, x_step=val_interval)
+                # net.train()
 
     def test(self):
         self.test_manager = DataManager(
@@ -306,7 +306,7 @@ class Model:
             update_lr(optimizer, lr)
             batch_image, batch_gt = self.train_manager.data_queue.get()
             data = torch.Tensor(batch_image).cuda().float().view(*vol_shape)
-            target = torch.Tensor(batch_gt).cuda().long().view(-1)
+            target = torch.Tensor(batch_gt).cuda().long()
 
             output = net(data)
             loss = net.loss(output, target)

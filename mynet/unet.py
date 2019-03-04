@@ -63,24 +63,19 @@ class OutConv(nn.Module):
 
     def __init__(self, in_ch, out_ch):
         super().__init__()
-        self._out_ch = out_ch
         self.conv = nn.Conv2d(in_ch, out_ch, 1)
 
     def forward(self, x):
-        x = self.conv(x)
-        x = x.permute(0, 2, 3, 1).contiguous()
-        return x.view(-1, self._out_ch)
+        return self.conv(x)
 
 
 class UNet(BasicNet):
     def __init__(self, n_channels=1, n_classes=2, dropout=1, loss_type='nll', *args, **kwargs):
-        super(UNet, self).__init__()
-        if loss_type == 'nll':
+        super(UNet, self).__init__(loss_type=loss_type)
+        if 'nll' in loss_type:
             self.softmax = F.log_softmax
-            self.loss = self.nll_loss
-        elif loss_type == 'dice':
+        elif 'dice' in loss_type:
             self.softmax = F.softmax
-            self.loss = self.dice_loss
 
         self.down1 = DownConvBlock(n_channels, 64, dropout)
         self.down2 = DownConvBlock(64, 128, dropout)
