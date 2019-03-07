@@ -131,7 +131,10 @@ class Model:
         self.train_manager.run_feed_thread()
         # create the network
         net = getattr(CNN, self.params['net'])(
-            loss_type=self.params['loss'], dropout=self.params['dropout'])
+            block_num=self.params['block_num'],
+            loss_type=self.params['loss'],
+            dropout=self.params['dropout']
+        )
         if self.params['snapshot'] > 0:
             self.logger.info("loading checkpoint " +
                              str(self.params['snapshot']))
@@ -180,7 +183,7 @@ class Model:
         # )
         # scheduler = optim.lr_scheduler.ExponentialLR(optimizer, self.params['expgamma'])
         # scheduler = CNN.NoWorkLR(optimizer)
-        scheduler = CNN.MultiStepLR(optimizer, self.params['step'], 0.1)
+        scheduler = CNN.MultiStepLR(optimizer, self.params['step'], self.params['step_rate'])
         scheduler.last_epoch = snapshot - 1
 
         self.logger.info('Create scheduler max lr: {} min lr: {} Tmax: {}'.format(
@@ -274,7 +277,10 @@ class Model:
         self.test_manager.load_data()
 
         net = getattr(CNN, self.params['net'])(
-            loss_type=self.params['loss'], dropout=self.params['dropout'])
+            block_num=self.params['block_num'],
+            loss_type=self.params['loss'],
+            dropout=self.params['dropout']
+        )
         prefix_save = os.path.join(
             self.params['dirSnapshots'],
             self.params['tailSnapshots']
@@ -349,7 +355,10 @@ class Model:
         self.train_manager.run_feed_thread()
         # create the network
         net = getattr(CNN, self.params['net'])(
-            loss_type=self.params['loss'], dropout=self.params['dropout'])
+            block_num=self.params['block_num'],
+            loss_type=self.params['loss'],
+            dropout=self.params['dropout']
+        )
         net.apply(self._weights_init)
 
         net.train()

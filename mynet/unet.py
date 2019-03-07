@@ -7,97 +7,132 @@ import torch.nn.functional as F
 from .base import BasicNet
 
 
-class Indentity(nn.Module):
-    def forward(self, x):
-        return x
-
-
 class ConvBlock(nn.Module):
-    '''(conv => BN => ReLU [=> dropout]) * 2'''
-
-    def __init__(self, in_ch, out_ch, dropout=1):
+    '''
+    => (conv => BN => ReLU) * 2 =>
+    '''
+    def __init__(self, in_ch, out_ch):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(out_ch),
-            nn.Dropout2d(dropout) if dropout is not 1 else Indentity(),
             nn.Conv2d(out_ch, out_ch, 3, padding=1),
             nn.BatchNorm2d(out_ch),
             nn.ReLU(out_ch),
-            nn.Dropout2d(dropout) if dropout is not 1 else Indentity()
         )
 
     def forward(self, x):
         return self.conv(x)
 
 
-class DownConvBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, dropout=1):
+class ResConvBlock(nn.Module):
+    '''
+    => (BN => ReLU => conv) * 2 =>
+      \=>   conv   =>   BN   =>/ 
+    '''
+    def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.conv = ConvBlock(in_ch, out_ch, dropout)
+        self.conv = nn.Sequential(
+            nn.BatchNorm2d(in_ch),
+            nn.ReLU(in_ch),
+            nn.Conv2d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_ch),
+            nn.ReLU(out_ch),
+            nn.Conv2d(out_ch, out_ch, 3, padding=1, bias=False),
+        )
+        self.residual = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 1, bias=False),
+            nn.BatchNorm2d(out_ch)
+        )
+
+    def forward(self, x):
+        residual = self.residual(x)
+        return self.conv(x) + residual
+
+class DownConvBlock(nn.Module):
+    '''
+    => convblock [=> dropout] => maxpool =>
+                              \=>  skip  =>
+    '''
+    def __init__(self, Block, in_ch, out_ch, dropout=1):
+        super().__init__()
+        self.in_ch = in_ch
+        self.out_ch = out_ch
+        self.conv = Block(in_ch, out_ch)
+        self.dropout = nn.Dropout2d(dropout) if dropout is not 1 else None
         self.pool = nn.MaxPool2d(2)
 
     def forward(self, x):
         x = self.conv(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
         return self.pool(x), x
 
 
 class UpConvBlock(nn.Module):
-    def __init__(self, in_ch, out_ch, dropout=1):
+    '''
+    => upsample => cat [=> dropout] => convblock =>
+    =>  skip  =>/
+    '''
+    def __init__(self, Block, in_ch, out_ch, dropout=1):
         super().__init__()
+        self.in_ch = in_ch
+        self.out_ch = out_ch
         self.upsample = nn.Sequential(
             nn.UpsamplingBilinear2d(scale_factor=2),
-            nn.Conv2d(in_ch, out_ch, 3, padding=1)
+            # nn.Conv2d(in_ch, out_ch, 3, padding=1)
+            nn.Conv2d(in_ch, out_ch, 1)
         )
-        self.conv = ConvBlock(in_ch, out_ch, dropout)
+        self.dropout = nn.Dropout2d(dropout) if dropout is not 1 else None
+        self.conv = Block(in_ch, out_ch)
 
     def forward(self, x, skip):
         x = self.upsample(x)
         x = torch.cat([x, skip], dim=1)
+        if self.dropout is not None:
+            x = self.dropout(x)
         return self.conv(x)
 
 
-class OutConv(nn.Module):
-    '''conv => tranpose => flatten'''
-
-    def __init__(self, in_ch, out_ch):
-        super().__init__()
-        self.conv = nn.Conv2d(in_ch, out_ch, 1)
-
-    def forward(self, x):
-        return self.conv(x)
-
-
-class UNet(BasicNet):
-    def __init__(self, n_channels=1, n_classes=2, dropout=1, loss_type='nll', *args, **kwargs):
-        super(UNet, self).__init__(loss_type=loss_type)
-        if 'nll' in loss_type:
-            self.softmax = F.log_softmax
-        elif 'dice' in loss_type:
-            self.softmax = F.softmax
-
-        self.down1 = DownConvBlock(n_channels, 64, dropout)
-        self.down2 = DownConvBlock(64, 128, dropout)
-        self.down3 = DownConvBlock(128, 256, dropout)
-        self.down4 = DownConvBlock(256, 512, dropout)
-        self.mid = ConvBlock(512, 1024, dropout)
-        self.up4 = UpConvBlock(1024, 512, dropout)
-        self.up3 = UpConvBlock(512, 256, dropout)
-        self.up2 = UpConvBlock(256, 128, dropout)
-        self.up1 = UpConvBlock(128, 64, dropout)
-        self.outc = OutConv(64, n_classes)
-        self.net_name = 'U-Net'
+class BasicUNet(BasicNet):
+    def __init__(self, Block, n_channels=1, n_classes=2, block_num=4, dropout=1, loss_type='dice', *args, **kwargs):
+        super().__init__(loss_type=loss_type)
+        down_blocks_channel = [(n_channels, 64)] + [(2 ** (i + 6), 2 ** (i + 7)) for i in range(block_num - 1)]
+        up_blocks_channel = [(2 ** (i + 7), 2 ** (i + 6)) for i in reversed(range(block_num))]
+        self.block_num = block_num
+        self.down_blocks = nn.ModuleList([
+            DownConvBlock(Block, *block_channel, dropout)
+            for block_channel in down_blocks_channel
+        ])
+        self.up_blocks = nn.ModuleList([
+            UpConvBlock(Block, *block_channel, dropout)
+            for block_channel in up_blocks_channel
+        ])
+        self.mid = Block(2 ** (block_num + 5), 2 ** (block_num + 6))
+        self.out = nn.Conv2d(64, n_classes, 1)
+        self.net_name = 'BasicUNet'
 
     def forward(self, x):
-        x, skip1 = self.down1(x)
-        x, skip2 = self.down2(x)
-        x, skip3 = self.down3(x)
-        x, skip4 = self.down4(x)
+        skip_list = []
+        for down_block in self.down_blocks:
+            x, skip = down_block(x)
+            skip_list.append(skip)
+
         x = self.mid(x)
-        x = self.up4(x, skip4)
-        x = self.up3(x, skip3)
-        x = self.up2(x, skip2)
-        x = self.up1(x, skip1)
-        x = self.outc(x)
-        return self.softmax(x, dim=1)
+
+        for skip, up_block in zip(reversed(skip_list), self.up_blocks):
+            x = up_block(x, skip)
+
+        return self.softmax(self.out(x), dim=1)
+
+class UNet(BasicUNet):
+    def __init__(self, n_channels=1, n_classes=2, block_num=4, dropout=1, loss_type='dice', *args, **kwargs):
+        super().__init__(ConvBlock, n_channels, n_classes, block_num, dropout, loss_type, *args, **kwargs)
+        self.net_name = 'UNet'
+
+
+class ResUNet(BasicUNet):
+    def __init__(self, n_channels=1, n_classes=2, block_num=4, dropout=1, loss_type='dice', *args, **kwargs):
+        super().__init__(ResConvBlock, n_channels, n_classes, block_num, dropout, loss_type, *args, **kwargs)
+        self.net_name = 'ResUNet'

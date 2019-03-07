@@ -1,6 +1,5 @@
 from .base import BasicNet
-from .unet import UNet
-from .unetv2 import UNetV2
+from .unet import UNet, ResUNet
 from .vnet import VNet
-from .scheduler import (NoWorkLR, RewarmCosineAnnealingLR, MultiStepLR,
-                        SomeCosineAnnealingLR, RewarmLongCosineAnnealingLR)
+from .scheduler import NoWorkLR, MultiStepLR, RewarmCosineAnnealingLR, RewarmLengthenCosineAnnealingLR
+from .dsnet import DSUNet, DSResUNet

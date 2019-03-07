@@ -1,5 +1,5 @@
 import math
-from torch.optim.lr_scheduler import *
+from torch.optim.lr_scheduler import LambdaLR, CosineAnnealingLR, MultiStepLR
 
 
 class NoWorkLR(LambdaLR):
@@ -14,18 +14,7 @@ class RewarmCosineAnnealingLR(CosineAnnealingLR):
         return [self.eta_min + (lr - self.eta_min) * (1 + math.cos(x)) / 2 for lr in self.base_lrs]
 
 
-class SomeCosineAnnealingLR(CosineAnnealingLR):
-    def get_period(self):
-        return int(math.log2(self.last_epoch / self.T_max + 1))
-
-    def get_lr(self):
-        period = self.get_period()
-        T_period = self.T_max ** period
-        return [self.eta_min + (base_lr - self.eta_min) *
-                (1 + math.cos(math.pi * (self.last_epoch - T_period + 1) / T_period)) / 2
-                for base_lr in self.base_lrs]
-
-class RewarmLongCosineAnnealingLR(CosineAnnealingLR):
+class RewarmLengthenCosineAnnealingLR(CosineAnnealingLR):
     def get_period(self):
         return int(math.log2(self.last_epoch / self.T_max + 1))
 

@@ -268,21 +268,34 @@ class DataManager2D(DataManager):
         return data, image, gt, pos_list, (pad_width_num, pad_height_num)
 
     def run_load_thread(self):
-        self.numpy_images.clear()
-        self.numpy_gts.clear()
-        self.shapes.clear()
-        # pool = threadpool.ThreadPool(self.params['loadThreadNum'])
-        # reqs = threadpool.makeRequests(self._load_numpy_data, self.data_list)
-        pool = multiprocessing.Pool(self.params['loadThreadNum'])
-        result = pool.map(self._load_numpy_data, self.data_list)
-        pool.close()
-        pool.join()
-        for data, image, gt, pos_list, pad in result:
+        def load_callback(result):
+            data, image, gt, pos_list, pad = result
             self.shapes[data] = image.shape
             self.numpy_images[data] = image
             self.numpy_gts[data] = gt
             self.pos[data] = pos_list
             self.func[data] = self.get_transfer(*pad, True)
+
+        self.numpy_images.clear()
+        self.numpy_gts.clear()
+        self.shapes.clear()
+        if self.params['load_by_process']:
+            pool = multiprocessing.Pool(self.params['loadThreadNum'])
+            result = pool.map_async(
+                self._load_numpy_data, self.data_list,
+                callback=lambda results: [load_callback(result) for result in results]
+            )
+            pool.close()
+            pool.join()
+        else:
+            pool = threadpool.ThreadPool(self.params['loadThreadNum'])
+            reqs = threadpool.makeRequests(
+                self._load_numpy_data, self.data_list,
+                callback=lambda req, result: load_callback(result)
+            )
+            for req in reqs:
+                pool.putRequest(req)
+            pool.wait()
 
     def _feed_data_shuffle_thread(self, pos_queue):
         true_pos = list()
