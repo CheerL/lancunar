@@ -12,7 +12,11 @@ class DataManager:
         self.params = params
         self.size = params['size']
         self.stride = params['stride']
-        self.batch_size = params['batchsize']
+        self.vol_size = params['vol_size']
+        if mode == 'test':
+            self.batch_size = params['test_batch_size']
+        else:
+            self.batch_size = params['batch_size']
         self.src_dir = src_dir
         self.result_dir = result_dir
         self.mode = mode
@@ -37,7 +41,7 @@ class DataManager:
         self.run_load_thread()
 
     def _feed_data_shuffle_thread(self, pos_queue):
-        dim = tuple(range(1, len(self.params['VolSize'])+1))
+        dim = tuple(range(1, len(self.vol_size)+1))
         true_pos = list()
         for data, gt in self.numpy_gts.items():
             for pos in np.where(gt.any(dim) == True)[0]:
@@ -63,7 +67,7 @@ class DataManager:
 
     def _feed_data_feed_thread(self, pos_queue):
         ''' the thread worker to prepare the training data'''
-        data_size = (self.batch_size, 1) + self.params['VolSize']
+        data_size = (self.batch_size, 1) + self.vol_size
         while True:
             image_list = list()
             gt_list = list()
@@ -105,7 +109,7 @@ class DataManager:
             pool.putRequest(req)
 
     def _load_data_split(self, image):
-        for k, (i, j) in enumerate(zip(image.shape, self.params['VolSize'])):
+        for k, (i, j) in enumerate(zip(image.shape, self.vol_size)):
             if i % j:
                 index_a = [slice(num) for num in image.shape]
                 index_a[k] = slice(i // j * j)
@@ -114,8 +118,8 @@ class DataManager:
                 image = np.concatenate((image[tuple(index_a)], image[tuple(index_b)]), k)
 
         for i in range(3):
-            image = np.array(np.split(image, image.shape[-i] // self.params['VolSize'][-i], -i))
-        return image.reshape(-1, *self.params['VolSize'])
+            image = np.array(np.split(image, image.shape[-i] // self.vol_size[-i], -i))
+        return image.reshape(-1, *self.vol_size)
 
     def _load_numpy_data(self, data):
         image_name = os.path.join(self.src_dir, data, 'extimg.nii.gz')
@@ -164,7 +168,7 @@ class DataManager:
 
     def reshape_to_sitk_image(self, data, name, type_='gt'):
         image_width, image_height, image_depth = self.shapes[name]
-        vol_width, vol_height, vol_depth = self.params['VolSize']
+        vol_width, vol_height, vol_depth = self.vol_size
 
         width_step = image_width // vol_width
         depth_remain = image_depth % vol_depth
@@ -202,7 +206,7 @@ class DataManager2D(DataManager):
     FALSE = 0
 
     def __init__(self, src_dir, result_dir, params, mode='train'):
-        assert len(params['VolSize']) == 2
+        assert len(params['vol_size']) == 2
         self.func = dict()
         super().__init__(src_dir, result_dir, params, mode=mode)
 
@@ -245,7 +249,7 @@ class DataManager2D(DataManager):
         else:
             gt = np.zeros(image.shape, self.gt_feed_type)
 
-        if sitk_image.GetDirection()[4] < 0:
+        if sitk_image.GetDirection()[4] < 0 and self.mode == 'train':
             image = np.fliplr(image)
             gt = np.fliplr(gt)
 
@@ -279,8 +283,9 @@ class DataManager2D(DataManager):
         self.numpy_images.clear()
         self.numpy_gts.clear()
         self.shapes.clear()
+        load_num = max(len(self.data_list), self.params['loadThreadNum'])
         if self.params['load_by_process']:
-            pool = multiprocessing.Pool(self.params['loadThreadNum'])
+            pool = multiprocessing.Pool(load_num)
             result = pool.map_async(
                 self._load_numpy_data, self.data_list,
                 callback=lambda results: [load_callback(result) for result in results]
@@ -288,7 +293,7 @@ class DataManager2D(DataManager):
             pool.close()
             pool.join()
         else:
-            pool = threadpool.ThreadPool(self.params['loadThreadNum'])
+            pool = threadpool.ThreadPool(load_num)
             reqs = threadpool.makeRequests(
                 self._load_numpy_data, self.data_list,
                 callback=lambda req, result: load_callback(result)
@@ -347,11 +352,11 @@ class DataManager2D(DataManager):
         elif type_ == 'image':
             dtype = self.image_feed_type
 
-        sitk_image = np.zeros(self.numpy_images[data].shape, dtype=dtype)
-        sitk_image_count = np.zeros(self.numpy_images[data].shape, dtype=np.int)
+        sitk_image = np.zeros(self.numpy_images[name].shape, dtype=dtype)
+        sitk_image_count = np.zeros(self.numpy_images[name].shape, dtype=np.int)
 
         for num, image in enumerate(data):
-            pos = self.func[data](num)
+            pos = self.func[name](num)
             sitk_image[pos] += image
             sitk_image_count[pos] += 1
 

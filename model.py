@@ -57,16 +57,19 @@ class Model:
 
     def predict(self, net, manager, data):
         ''' produce the segmentation result, one time one image'''
+        net.eval()
         image = manager.numpy_images[data]
         gt = manager.numpy_gts[data]
         unskip_pos = np.where(manager.pos[data] != manager.SKIP)[0]
         num_to_pos_func = manager.func[data]
         size = unskip_pos.size
-        vol_shape = manager.params['VolSize']
-        batch_size = manager.params['batchsize']
+        vol_shape = manager.vol_size
+        batch_size = manager.batch_size
         result = np.zeros((manager.pos[data].size, *vol_shape), dtype=manager.gt_feed_type)
         all_loss = list()
         all_iou = list()
+        all_true_loss = list()
+        all_true_iou = list()
         gt_sum = 0
 
         for start in range(0, size, batch_size):
@@ -81,16 +84,22 @@ class Model:
             data = torch.Tensor(image_block).cuda().float().view(-1, 1, *vol_shape)
             target = torch.Tensor(gt_block).cuda().long()
             output = net(data)
-            pred = output.max(1)[1].view(-1, *vol_shape)
-            result[pos] = pred.cpu().numpy()
             block_iou = net.iou(output, target).cpu().item()
             block_loss = net.loss(output, target).cpu().item()
+            block_gt_sum = gt_block.sum()
             all_iou.append(block_iou)
             all_loss.append(block_loss)
+            pred = output.max(1)[1].view(-1, *vol_shape)
+            result[pos] = pred.cpu().numpy()
             gt_sum += gt_block.sum()
+            if block_gt_sum:
+                all_true_iou.append(block_iou)
+                all_true_loss.append(block_loss)
+                # print(pred.sum(), block_gt_sum, block_iou, block_loss)
 
         iou = np.mean(all_iou)
         loss = np.mean(all_loss)
+        print(np.mean(all_true_iou) if all_true_iou else 1, np.mean(all_true_loss) if all_true_loss else 0)
         return result, loss, iou, gt_sum
 
     def save_checkpoint(self, state, path, prefix, filename='checkpoint.pth.tar'):
@@ -190,7 +199,7 @@ class Model:
             self.params['baseLR'], self.params['minLR'], t_max
         ))
         self.logger.info('Run {}'.format(net.net_name))
-        vol_shape = (-1, 1, *self.train_manager.params['VolSize'])
+        vol_shape = (-1, 1, *self.train_manager.vol_size)
 
         for iteration in range(1, nr_iter+1):
             batch_image, batch_gt = self.train_manager.data_queue.get()
@@ -306,7 +315,7 @@ class Model:
         best_loss = 0.
         losses = []
         log_lrs = []
-        vol_shape = (-1, 1, *self.train_manager.params['VolSize'])
+        vol_shape = (-1, 1, *self.train_manager.vol_size)
 
         for iteration in range(1, num+1):
             update_lr(optimizer, lr)
