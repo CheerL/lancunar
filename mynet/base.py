@@ -21,8 +21,18 @@ class BasicNet(nn.Module):
         union = probs.sum() + labels.sum() - intersection
         return (intersection + smooth) / (union + smooth)
 
+    def get_pred(self, logits, size):
+        return logits.max(1)[1].view(-1, size, size)
+
     def dice_similarity_coefficient(self,logits, labels):
         pass
 
     def sensitivity(self, logits, labels):
         pass
+
+    def img(vis, data, labels, logits, size):
+        vis.img_many({
+            'input': data,
+            'gt': labels.view(-1, 1, size, size),
+            'pred': net.get_pred(logits, size).view(-1, 1, size, size)
+        })

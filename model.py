@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 import mynet as CNN
-from data_manager import DataManager2D as DataManager
+from data_manager import DataManager
 from logger import Logger
 from visualizer import Visualizer
 # from apex import amp
@@ -62,34 +62,30 @@ class Model:
         gt = manager.numpy_gts[data]
         unskip_pos = np.where(manager.pos[data] != manager.SKIP)[0]
         num_to_pos_func = manager.func[data]
-        size = unskip_pos.size
-        vol_shape = manager.vol_size
+        size = manager.size
         batch_size = manager.batch_size
-        result = np.zeros((manager.pos[data].size, *vol_shape), dtype=manager.gt_feed_type)
+        result = np.zeros((manager.pos[data].size, size, size), dtype=manager.gt_feed_type)
         all_loss = list()
         all_iou = list()
         all_true_loss = list()
         all_true_iou = list()
         gt_sum = 0
 
-        for start in range(0, size, batch_size):
-            end = min(start + batch_size, size)
+        for start in range(0, unskip_pos.size, batch_size):
+            end = min(start + batch_size, unskip_pos.size)
             pos = unskip_pos[start:end]
             image_block = np.array([image[num_to_pos_func(num)] for num in pos])
             gt_block = np.array([gt[num_to_pos_func(num)] for num in pos])
-            # print(image_block.shape, image_block.dtype)
-            # image_block = image[start:end].reshape(-1, 1, *vol_shape)
-            # gt_block = gt[start:end].reshape(-1, 1, *vol_shape)
 
-            data = torch.Tensor(image_block).cuda().float().view(-1, 1, *vol_shape)
-            target = torch.Tensor(gt_block).cuda().long()
-            output = net(data)
-            block_iou = net.iou(output, target).cpu().item()
-            block_loss = net.loss(output, target).cpu().item()
+            data = torch.Tensor(image_block).cuda().float().view(-1, 1, size, size)
+            labels = torch.Tensor(gt_block).cuda().long()
+            logits = net(data)
+            block_iou = net.iou(logits, labels).cpu().item()
+            block_loss = net.loss(logits, labels).cpu().item()
             block_gt_sum = gt_block.sum()
             all_iou.append(block_iou)
             all_loss.append(block_loss)
-            pred = output.max(1)[1].view(-1, *vol_shape)
+            pred = net.get_pred(logits, size)
             result[pos] = pred.cpu().numpy()
             gt_sum += gt_block.sum()
             if block_gt_sum:
@@ -142,7 +138,8 @@ class Model:
         net = getattr(CNN, self.params['net'])(
             block_num=self.params['block_num'],
             loss_type=self.params['loss'],
-            dropout=self.params['dropout']
+            dropout=self.params['dropout'],
+            ds_weight=self.params['ds_weight']
         )
         if self.params['snapshot'] > 0:
             self.logger.info("loading checkpoint " +
@@ -199,20 +196,18 @@ class Model:
             self.params['baseLR'], self.params['minLR'], t_max
         ))
         self.logger.info('Run {}'.format(net.net_name))
-        vol_shape = (-1, 1, *self.train_manager.vol_size)
+        size = self.train_manager.size
 
         for iteration in range(1, nr_iter+1):
             batch_image, batch_gt = self.train_manager.data_queue.get()
-            data = torch.Tensor(batch_image).cuda().float().view(*vol_shape)
-            target = torch.Tensor(batch_gt).cuda().long()
-            output = net(data)
-            loss = net.loss(output, target)
+            data = torch.Tensor(batch_image).cuda().float().view(-1, 1, size, size)
+            labels = torch.Tensor(batch_gt).cuda().long()
+            logits = net(data)
+            loss = net.loss(logits, labels)
             temp_loss += loss.cpu().item()
-            temp_iou += net.iou(output, target)
+            temp_iou += net.iou(logits, labels).cpu().item()
             real_iteration = snapshot + iteration
             optimizer.zero_grad()
-            # with amp_handle.scale_loss(loss, optimizer) as scaled_loss:
-            #     scaled_loss.backward()
             loss.backward()
             scheduler.step()
             optimizer.step()
@@ -233,11 +228,7 @@ class Model:
                 }, x_start=snapshot + train_interval, x_step=train_interval)
                 temp_loss = 0
                 temp_iou = 0
-                self.vis.img_many({
-                    'input': data,
-                    'gt': target.view(*vol_shape),
-                    'pred': output.max(1)[1].view(*vol_shape)
-                })
+                net.img(self.vis, data, labels, logits, self.train_manager.size)
 
             if not iteration % val_interval:
                 # val_loss, val_iou = self.all_predict(
@@ -288,7 +279,8 @@ class Model:
         net = getattr(CNN, self.params['net'])(
             block_num=self.params['block_num'],
             loss_type=self.params['loss'],
-            dropout=self.params['dropout']
+            dropout=self.params['dropout'],
+            ds_weight=self.params['ds_weight']
         )
         prefix_save = os.path.join(
             self.params['dirSnapshots'],
@@ -315,16 +307,16 @@ class Model:
         best_loss = 0.
         losses = []
         log_lrs = []
-        vol_shape = (-1, 1, *self.train_manager.vol_size)
+        size = self.train_manager.size
 
         for iteration in range(1, num+1):
             update_lr(optimizer, lr)
             batch_image, batch_gt = self.train_manager.data_queue.get()
-            data = torch.Tensor(batch_image).cuda().float().view(*vol_shape)
-            target = torch.Tensor(batch_gt).cuda().long()
+            data = torch.Tensor(batch_image).cuda().float().view(-1, 1, size, size)
+            labels = torch.Tensor(batch_gt).cuda().long()
 
-            output = net(data)
-            loss = net.loss(output, target)
+            logits = net(data)
+            loss = net.loss(logits, labels)
 
             # Compute the smoothed loss
             avg_loss = beta * avg_loss + (1 - beta) * loss.cpu().item()
@@ -366,7 +358,8 @@ class Model:
         net = getattr(CNN, self.params['net'])(
             block_num=self.params['block_num'],
             loss_type=self.params['loss'],
-            dropout=self.params['dropout']
+            dropout=self.params['dropout'],
+            ds_weight=self.params['ds_weight']
         )
         net.apply(self._weights_init)
 
