@@ -16,8 +16,9 @@ class BasicNet(nn.Module):
 
     def iou(self, logits, labels):
         smooth = 0.01
+        labels = labels.float()
         probs = logits[:, 1]
-        intersection = probs[labels == 1].sum()
+        intersection = (probs * labels).sum()
         union = probs.sum() + labels.sum() - intersection
         return (intersection + smooth) / (union + smooth)
 

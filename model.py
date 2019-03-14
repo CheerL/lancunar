@@ -40,31 +40,29 @@ class Model:
 
         loss_list = list()
         iou_list = list()
-        for data in manager.data_list:
+        for name, data in manager.data.items():
             result, loss, iou, gt_sum = self.predict(net, manager, data)
             loss_list.append(loss)
             iou_list.append(iou)
 
             if not silent:
                 self.logger.info("{}: name: {} loss: {:.7f} iou: {:.5%} predict: {} gt: {}".format(
-                    run_type, data, loss, iou, result.sum(), gt_sum
+                    run_type, name, loss, iou, result.sum(), gt_sum
                 ))
 
             if save:
-                manager.write_result(result, data)
+                manager.write_result(result, name)
 
         return np.mean(loss_list), np.mean(iou_list)
 
     def predict(self, net, manager, data):
         ''' produce the segmentation result, one time one image'''
         net.eval()
-        image = manager.numpy_images[data]
-        gt = manager.numpy_gts[data]
-        unskip_pos = np.where(manager.pos[data] != manager.SKIP)[0]
-        num_to_pos_func = manager.func[data]
+        unskip_pos = np.where(data.pos != manager.SKIP)[0]
+
         size = manager.size
         batch_size = manager.batch_size
-        result = np.zeros((manager.pos[data].size, size, size), dtype=manager.gt_feed_type)
+        result = np.zeros((data.pos.size, size, size), dtype=manager.gt_feed_type)
         all_loss = list()
         all_iou = list()
         all_true_loss = list()
@@ -74,12 +72,12 @@ class Model:
         for start in range(0, unskip_pos.size, batch_size):
             end = min(start + batch_size, unskip_pos.size)
             pos = unskip_pos[start:end]
-            image_block = np.array([image[num_to_pos_func(num)] for num in pos])
-            gt_block = np.array([gt[num_to_pos_func(num)] for num in pos])
+            image_block = np.array([data.num_to_pos_func(num, type_='image') for num in pos])
+            gt_block = np.array([data.num_to_pos_func(num, type_='gt') for num in pos])
 
-            data = torch.Tensor(image_block).cuda().float().view(-1, 1, size, size)
+            input_ = torch.Tensor(image_block).cuda().float().view(-1, 1, size, size)
             labels = torch.Tensor(gt_block).cuda().long()
-            logits = net(data)
+            logits = net(input_)
             block_iou = net.iou(logits, labels).cpu().item()
             block_loss = net.loss(logits, labels).cpu().item()
             block_gt_sum = gt_block.sum()
@@ -120,20 +118,19 @@ class Model:
 
         self.train_manager = DataManager(
             self.params['dirTrain'],
-            self.params['dirResult'],
             self.params['dataManager'],
             mode='train'
         )
-        self.val_manager = DataManager(
-            self.params['dirValidation'],
-            self.params['dirResult'],
-            self.params['dataManager'],
-            mode='val'
-        )
-        self.train_manager.load_data()
-        self.val_manager.load_data()
-
-        self.train_manager.run_feed_thread()
+        # self.val_manager = DataManager(
+        #     self.params['dirValidation'],
+        #     self.params['dataManager'],
+        #     mode='val'
+        # )
+        self.train_manager.run_load_worker()
+        # self.val_manager.run_load_worker()
+        pool, manager = self.train_manager.get_feed_pool_and_manager()
+        data_queue = self.train_manager.run_feed_worker(pool, manager)
+        # print(data_queue)
         # create the network
         net = getattr(CNN, self.params['net'])(
             block_num=self.params['block_num'],
@@ -167,11 +164,11 @@ class Model:
 
         net.train()
         net.cuda()
-        t_max = max(
-            self.params['min_tmax'],
-            round(self.train_manager.data_num /
-                  self.train_manager.batch_size * 8, -2)
-        )
+        # t_max = max(
+        #     self.params['min_tmax'],
+        #     round(self.train_manager.data_num /
+        #           self.train_manager.batch_size * 8, -2)
+        # )
         # scheduler = CNN.RewarmCosineAnnealingLR(
         #     optimizer,
         #     T_max=t_max,
@@ -192,17 +189,18 @@ class Model:
         scheduler = CNN.MultiStepLR(optimizer, self.params['step'], self.params['step_rate'])
         scheduler.last_epoch = snapshot - 1
 
-        self.logger.info('Create scheduler max lr: {} min lr: {} Tmax: {}'.format(
-            self.params['baseLR'], self.params['minLR'], t_max
-        ))
+        # self.logger.info('Create scheduler max lr: {} min lr: {} Tmax: {}'.format(
+        #     self.params['baseLR'], self.params['minLR'], t_max
+        # ))
         self.logger.info('Run {}'.format(net.net_name))
         size = self.train_manager.size
 
         for iteration in range(1, nr_iter+1):
-            batch_image, batch_gt = self.train_manager.data_queue.get()
-            data = torch.Tensor(batch_image).cuda().float().view(-1, 1, size, size)
+            # print(data_queue.qsize())
+            batch_image, batch_gt = data_queue.get()
+            input_ = torch.Tensor(batch_image).cuda().float().view(-1, 1, size, size)
             labels = torch.Tensor(batch_gt).cuda().long()
-            logits = net(data)
+            logits = net(input_)
             loss = net.loss(logits, labels)
             temp_loss += loss.cpu().item()
             temp_iou += net.iou(logits, labels).cpu().item()
@@ -228,7 +226,7 @@ class Model:
                 }, x_start=snapshot + train_interval, x_step=train_interval)
                 temp_loss = 0
                 temp_iou = 0
-                net.img(self.vis, data, labels, logits, self.train_manager.size)
+                net.img(self.vis, input_, labels, logits, self.train_manager.size)
 
             if not iteration % val_interval:
                 # val_loss, val_iou = self.all_predict(
@@ -270,11 +268,10 @@ class Model:
     def test(self):
         self.test_manager = DataManager(
             self.params['dirTest'],
-            self.params['dirResult'],
             self.params['dataManager'],
             mode='test'
         )
-        self.test_manager.load_data()
+        self.test_manager.run_load_worker()
 
         net = getattr(CNN, self.params['net'])(
             block_num=self.params['block_num'],
@@ -296,7 +293,7 @@ class Model:
                 loss, iou
             ))
 
-    def _try_lr(self, net, optimizer, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
+    def _try_lr(self, net, data_queue, optimizer, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
         def update_lr(optimizer, lr):
             for group in optimizer.param_groups:
                 group['lr'] = lr
@@ -311,11 +308,11 @@ class Model:
 
         for iteration in range(1, num+1):
             update_lr(optimizer, lr)
-            batch_image, batch_gt = self.train_manager.data_queue.get()
-            data = torch.Tensor(batch_image).cuda().float().view(-1, 1, size, size)
+            batch_image, batch_gt = data_queue.get()
+            input_ = torch.Tensor(batch_image).cuda().float().view(-1, 1, size, size)
             labels = torch.Tensor(batch_gt).cuda().long()
 
-            logits = net(data)
+            logits = net(input_)
             loss = net.loss(logits, labels)
 
             # Compute the smoothed loss
@@ -348,12 +345,11 @@ class Model:
     def find_lr(self, start_lr=1e-7, end_lr=10.0, num=100, beta=0.9):
         self.train_manager = DataManager(
             self.params['dirTrain'],
-            self.params['dirResult'],
             self.params['dataManager'],
             mode='train'
         )
-        self.train_manager.load_data()
-        self.train_manager.run_feed_thread()
+        self.train_manager.run_load_worker()
+        data_queue = self.train_manager.run_feed_worker()
         # create the network
         net = getattr(CNN, self.params['net'])(
             block_num=self.params['block_num'],
@@ -372,4 +368,4 @@ class Model:
             momentum=0.9,
             weight_decay=self.params['weight_decay'],
         )
-        self._try_lr(net, optimizer, start_lr, end_lr, num, beta)
+        self._try_lr(net, data_queue, optimizer, start_lr, end_lr, num, beta)
