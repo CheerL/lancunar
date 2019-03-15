@@ -128,8 +128,7 @@ class Model:
         # )
         self.train_manager.run_load_worker()
         # self.val_manager.run_load_worker()
-        pool, manager = self.train_manager.get_feed_pool_and_manager()
-        data_queue = self.train_manager.run_feed_worker(pool, manager)
+        data_queue = self.train_manager.run_feed_worker()
         # print(data_queue)
         # create the network
         net = getattr(CNN, self.params['net'])(
@@ -194,12 +193,18 @@ class Model:
         # ))
         self.logger.info('Run {}'.format(net.net_name))
         size = self.train_manager.size
+        batch_size = self.train_manager.batch_size
 
         for iteration in range(1, nr_iter+1):
-            # print(data_queue.qsize())
-            batch_image, batch_gt = data_queue.get()
-            input_ = torch.Tensor(batch_image).cuda().float().view(-1, 1, size, size)
-            labels = torch.Tensor(batch_gt).cuda().long()
+            batch_image = np.zeros((batch_size, 1, size, size), dtype=self.train_manager.image_feed_type)
+            batch_gt = np.zeros((batch_size, size, size), dtype=self.train_manager.gt_feed_type)
+            for i in range(batch_size):
+                image, gt = data_queue.get()
+                batch_image[i, 0] = image
+                batch_gt[i] = gt
+
+            input_ = torch.FloatTensor(batch_image).cuda().view(-1, 1, size, size)
+            labels = torch.LongTensor(batch_gt).cuda()
             logits = net(input_)
             loss = net.loss(logits, labels)
             temp_loss += loss.cpu().item()
