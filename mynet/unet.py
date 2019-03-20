@@ -50,6 +50,35 @@ class ResConvBlock(nn.Module):
         residual = self.residual(x)
         return self.conv(x) + residual
 
+
+class ResBottleneckBlock(nn.Module):
+    '''
+    => BN => ReLU => conv1 => BN => ReLU => conv3 => BN => ReLU => conv1 =>
+      \=>                           conv                               =>/ 
+    '''
+    def __init__(self, in_ch, out_ch, rate=4):
+        super().__init__()
+        mid_ch = int(out_ch / rate)
+        self.conv = nn.Sequential(
+            nn.BatchNorm2d(in_ch),
+            nn.ReLU(in_ch),
+            nn.Conv2d(in_ch, mid_ch, 1, bias=False),
+            nn.BatchNorm2d(mid_ch),
+            nn.ReLU(mid_ch),
+            nn.Conv2d(mid_ch, mid_ch, 3, padding=1, bias=False),
+            nn.BatchNorm2d(mid_ch),
+            nn.ReLU(mid_ch),
+            nn.Conv2d(mid_ch, out_ch, 1, bias=False),
+        )
+        self.residual = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, 1, bias=False)
+            # nn.BatchNorm2d(out_ch)
+        )
+
+    def forward(self, x):
+        residual = self.residual(x)
+        return self.conv(x) + residual
+
 class DownConvBlock(nn.Module):
     '''
     => convblock [=> dropout] => maxpool =>
@@ -136,3 +165,8 @@ class ResUNet(BasicUNet):
     def __init__(self, n_channels=1, n_classes=2, block_num=4, dropout=1, loss_type='dice', *args, **kwargs):
         super().__init__(ResConvBlock, n_channels, n_classes, block_num, dropout, loss_type, *args, **kwargs)
         self.net_name = 'ResUNet'
+
+class ResBottleneckUNet(BasicUNet):
+    def __init__(self, n_channels=1, n_classes=2, block_num=4, dropout=1, loss_type='dice', *args, **kwargs):
+        super().__init__(ResBottleneckBlock, n_channels, n_classes, block_num, dropout, loss_type, *args, **kwargs)
+        self.net_name = 'ResBottleneckUNet'

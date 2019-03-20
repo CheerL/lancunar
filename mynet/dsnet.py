@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .unet import ConvBlock, ResConvBlock, BasicUNet
+from .unet import ConvBlock, ResConvBlock, ResBottleneckBlock, BasicUNet
 
 
 def get_deep_supvised_loss(loss_function, block_num, weight=None):
@@ -76,3 +76,9 @@ class DSResUNet(DSBasicUNet):
     def __init__(self, n_channels=1, n_classes=2, block_num=4, dropout=1, loss_type='dice', *args, **kwargs):
         super().__init__(ResConvBlock, n_channels, n_classes, block_num, dropout, loss_type, *args, **kwargs)
         self.net_name = 'DSResUNet'
+
+
+class DSResBottleneckUNet(DSBasicUNet):
+    def __init__(self, n_channels=1, n_classes=2, block_num=4, dropout=1, loss_type='dice', *args, **kwargs):
+        super().__init__(ResBottleneckBlock, n_channels, n_classes, block_num, dropout, loss_type, *args, **kwargs)
+        self.net_name = 'DSResBottleneckUNet'

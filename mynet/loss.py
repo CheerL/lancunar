@@ -14,7 +14,7 @@ def dice_score(logits: torch.Tensor, labels: torch.Tensor, axes=(1, 2)):
     return (numerator + smooth) / (denominator + smooth)
 
 def tversky_score(logits: torch.Tensor, labels: torch.Tensor,
-            weight_1: float=0.7, weight_2: float=0.3):
+            weight_1: float=0.5, weight_2: float=0.5):
     """
     logits: shape is (batch_size, 2, width, height), value belongs [0, 1]
     labels: shape is (batch_size, width, height), value belongs {0, 1}
@@ -29,7 +29,7 @@ def tversky_score(logits: torch.Tensor, labels: torch.Tensor,
     false_neg = true_probs * (1 - labels)
     false_pos = false_probs * labels
     numerator = true_pos.sum((1, 2))
-    denominator = (true_pos + weight_1 * false_neg + weight_2 * false_pos).sum((1, 2))
+    denominator = 2 * (true_pos + weight_1 * false_neg + weight_2 * false_pos).sum((1, 2))
     return (numerator + smooth) / (denominator + smooth)
 
 def dice_loss(logits: torch.Tensor, labels: torch.Tensor):
@@ -42,7 +42,7 @@ def flatten_dice_loss(logits: torch.Tensor, labels: torch.Tensor):
     return 1- dice
 
 def tversky_loss(logits: torch.Tensor, labels: torch.Tensor,
-                 weight_1: float=0.7, weight_2: float=0.3):
+                 weight_1: float=0.5, weight_2: float=0.5):
     """
     Tversky loss: https://arxiv.org/pdf/1706.05721.pdf
     """
@@ -51,7 +51,7 @@ def tversky_loss(logits: torch.Tensor, labels: torch.Tensor,
     return 1 - tversky.sum() / batch_size
 
 def focal_tversky_loss(logits: torch.Tensor, labels: torch.Tensor,
-                       weight_1: float=0.3, weight_2: float=0.7, gamma: float=2):
+                       weight_1: float=0.5, weight_2: float=0.5, gamma: float=2):
     """
     focal Tversky loss: https://arxiv.org/pdf/1810.07842.pdf
     """

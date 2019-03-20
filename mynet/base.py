@@ -31,7 +31,7 @@ class BasicNet(nn.Module):
     def sensitivity(self, logits, labels):
         pass
 
-    def img(vis, data, labels, logits, size):
+    def img(self, vis, data, labels, logits, size):
         vis.img_many({
             'input': data,
             'gt': labels.view(-1, 1, size, size),

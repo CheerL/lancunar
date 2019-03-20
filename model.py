@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 
 import mynet as CNN
-from data_manager import DataManager
+from data_manager import DataManager, DataWithSegManager
 from logger import Logger
 from visualizer import Visualizer
 # from apex import amp
@@ -93,7 +93,12 @@ class Model:
 
         iou = np.mean(all_iou)
         loss = np.mean(all_loss)
-        print(np.mean(all_true_iou) if all_true_iou else 1, np.mean(all_true_loss) if all_true_loss else 0)
+        self.logger.info(
+            'true iou: {:.5%}, true loss: {:.7f}'.format(
+                np.mean(all_true_iou) if all_true_iou else 1,
+                np.mean(all_true_loss) if all_true_loss else 0
+            )
+        )
         return result, loss, iou, gt_sum
 
     def save_checkpoint(self, state, path, prefix, filename='checkpoint.pth.tar'):
@@ -156,7 +161,7 @@ class Model:
         temp_iou = 0
         optimizer = torch.optim.SGD(
             net.parameters(),
-            lr=self.params['baseLR'],
+            lr=self.params['LR'],
             momentum=0.9,
             weight_decay=self.params['weight_decay'],
         )
@@ -189,7 +194,7 @@ class Model:
         scheduler.last_epoch = snapshot - 1
 
         # self.logger.info('Create scheduler max lr: {} min lr: {} Tmax: {}'.format(
-        #     self.params['baseLR'], self.params['minLR'], t_max
+        #     self.params['LR'], self.params['minLR'], t_max
         # ))
         self.logger.info('Run {}'.format(net.net_name))
         size = self.train_manager.size
@@ -369,8 +374,227 @@ class Model:
 
         optimizer = torch.optim.SGD(
             net.parameters(),
-            lr=self.params['baseLR'],
+            lr=self.params['LR'],
             momentum=0.9,
             weight_decay=self.params['weight_decay'],
         )
         self._try_lr(net, data_queue, optimizer, start_lr, end_lr, num, beta)
+
+
+class ModelWithSeg(Model):
+    def __init__(self, params):
+        self.params = params
+        self.logger = Logger(__name__, self.params['dirLog'])
+        self.vis = Visualizer(self.params['classify_visname'])
+
+    def train(self):
+        ''' train model'''
+        nr_iter = self.params['iteration']
+        snapshot = self.params['classify_snapshot']
+        train_interval = self.params['trainInterval']
+        val_interval = self.params['valInterval']
+
+        self.train_manager = DataWithSegManager(
+            self.params['dirTrain'],
+            self.params['dataManager'],
+            mode='train'
+        )
+        # self.val_manager = DataManager(
+        #     self.params['dirValidation'],
+        #     self.params['dataManager'],
+        #     mode='val'
+        # )
+        self.train_manager.run_load_worker()
+        # self.val_manager.run_load_worker()
+        data_queue = self.train_manager.run_feed_worker()
+        # print(data_queue)
+        # create the network
+
+        # TODO
+        net = getattr(CNN, self.params['classify_net'])(
+            loss_type=self.params['classify_loss'],
+            dropout=self.params['classify_dropout'],
+        )
+
+        if snapshot > 0:
+            self.logger.info("loading checkpoint {}".format(snapshot))
+            prefix_save = os.path.join(
+                self.params['dirSnapshots'],
+                self.params['classify_tailSnapshots']
+            )
+            checkpoint = torch.load('{}{}_checkpoint.pth.tar'.format(prefix_save, snapshot))
+            net.load_state_dict(checkpoint['state_dict'])
+            self.logger.info("loaded checkpoint {}".format(self.params['classify_snapshot']))
+        else:
+            net.apply(self._weights_init)
+
+        temp_loss = 0
+        temp_iou = 0
+        optimizer = torch.optim.SGD(
+            net.parameters(),
+            lr=self.params['classify_LR'],
+            momentum=0.9,
+            weight_decay=self.params['classify_weight_decay'],
+        )
+
+        net.train()
+        net.cuda()
+
+        scheduler = CNN.MultiStepLR(optimizer, self.params['classify_step'], self.params['classify_step_rate'])
+        scheduler.last_epoch = snapshot - 1
+
+        self.logger.info('Run {}'.format(net.net_name))
+        size = self.train_manager.size
+        batch_size = self.train_manager.batch_size
+
+        for iteration in range(1, nr_iter+1):
+            batch_input = np.zeros((batch_size, 2, size, size), dtype=self.train_manager.image_feed_type)
+            batch_gt = np.zeros((batch_size, size, size), dtype=self.train_manager.gt_feed_type)
+            batch_label = np.zeros((batch_size), dtype=np.uint8)
+            for i in range(batch_size):
+                image, gt, seg, label = data_queue.get()
+                batch_input[i, 0] = image
+                batch_input[i, 1] = seg
+                batch_gt[i] = gt
+                batch_label[i] = label
+
+            input_ = torch.FloatTensor(batch_input).cuda()
+            labels = torch.LongTensor(batch_label).cuda()
+            gts = torch.LongTensor(batch_gt).cuda()
+            logits = net(input_)
+            loss = net.loss(logits, labels)
+            temp_loss += loss.cpu().item()
+            optimizer.zero_grad()
+            loss.backward()
+            scheduler.step()
+            optimizer.step()
+
+            if not iteration % train_interval:
+                train_loss = temp_loss / train_interval
+                self.logger.info(
+                    "training: iter: {} loss: {:.7f}".format(
+                        snapshot + iteration,
+                        train_loss,
+                    ))
+                self.vis.plot_many({
+                    'loss': train_loss,
+                    'lr': optimizer.param_groups[0]['lr']
+                }, x_start=snapshot + train_interval, x_step=train_interval)
+                temp_loss = 0
+                temp_iou = 0
+                net.img(self.vis, input_, gts, logits, self.train_manager.size)
+
+            if not iteration % val_interval:
+                # val_loss, val_iou = self.all_predict(
+                #     net, silent=False)
+                # if val_iou > self.max_iou:
+                #     self.max_iou = val_iou
+                #     self.max_iou_loss = val_loss
+                #     self.best_iteration_iou = real_iteration
+
+                # if val_loss < self.min_loss:
+                #     self.min_loss = val_loss
+                #     self.min_loss_iou = val_iou
+                #     self.best_iteration_loss = real_iteration
+
+                self.save_checkpoint({'iteration': snapshot + iteration,
+                                      'state_dict': net.state_dict(),
+                                      'best_acc': self.best_iteration_loss == snapshot + iteration},
+                                     self.params['dirSnapshots'],
+                                     self.params['classify_tailSnapshots'])
+
+                # self.logger.info(
+                #     "validating: iteration: {} loss: {:.7f} iou: {:.5%}".format(
+                #         real_iteration, val_loss, val_iou
+                #     ))
+                # self.logger.info(
+                #     "validating: best_iou: {} loss: {:.7f} iou: {:.5%}".format(
+                #         self.best_iteration_iou, self.max_iou_loss, self.max_iou
+                #     ))
+                # self.logger.info(
+                #     "validating: best_loss: {} loss: {:.7f} iou: {:.5%}".format(
+                #         self.best_iteration_loss, self.min_loss, self.min_loss_iou
+                #     ))
+                # self.vis.plot_many({
+                #     'val_loss': val_loss,
+                #     'val_iou': val_iou
+                # }, x_start=snapshot + val_interval, x_step=val_interval)
+                # net.train()
+
+    def predict(self, net, manager, data):
+        ''' produce the segmentation result, one time one image'''
+        net.eval()
+        unskip_pos = np.where(data.pos != manager.SKIP)[0]
+
+        size = manager.size
+        batch_size = manager.batch_size
+        result = np.zeros((data.pos.size, size, size), dtype=manager.gt_feed_type)
+        all_loss = list()
+        all_iou = list()
+        all_true_loss = list()
+        all_true_iou = list()
+        gt_sum = 0
+
+        for start in range(0, unskip_pos.size, batch_size):
+            end = min(start + batch_size, unskip_pos.size)
+            pos = unskip_pos[start:end]
+            input_block = np.array([[
+                data.num_to_pos_func(num, type_='image'),
+                data.num_to_pos_func(num, type_='seg'),
+                ] for num in pos])
+            gt_block = np.array([data.num_to_pos_func(num, type_='gt') for num in pos])
+
+            input_ = torch.Tensor(input_block).cuda().float().view(-1, 2, size, size)
+            gts = torch.Tensor(gt_block).cuda().long()
+            labels = gts.byte().any(2).any(1).long()
+            logits = net(input_)
+            pred = net.get_pred(logits, input_, True)
+            block_loss = net.loss(logits, labels).cpu().item()
+            block_iou = net.iou(pred, gts).cpu().item()
+            block_gt_sum = gt_block.sum()
+            all_iou.append(block_iou)
+            all_loss.append(block_loss)
+            result[pos] = pred.cpu().numpy()
+            gt_sum += gt_block.sum()
+            if block_gt_sum:
+                all_true_iou.append(block_iou)
+                all_true_loss.append(block_loss)
+                # print(pred.sum(), block_gt_sum, block_iou, block_loss)
+
+        iou = np.mean(all_iou)
+        loss = np.mean(all_loss)
+        self.logger.info(
+            'true iou: {:.5%}, true loss: {:.7f}'.format(
+                np.mean(all_true_iou) if all_true_iou else 1,
+                np.mean(all_true_loss) if all_true_loss else 0
+            )
+        )
+        return result, loss, iou, gt_sum
+
+    def test(self):
+        self.test_manager = DataWithSegManager(
+            self.params['dirTest'],
+            self.params['dataManager'],
+            mode='test'
+        )
+        self.test_manager.run_load_worker()
+
+        net = getattr(CNN, self.params['classify_net'])(
+            loss_type=self.params['classify_loss'],
+            dropout=self.params['classify_dropout'],
+        )
+        prefix_save = os.path.join(
+            self.params['dirSnapshots'],
+            self.params['classify_tailSnapshots']
+        )
+        checkpoint = torch.load('{}{}_checkpoint.pth.tar'.format(
+            prefix_save,
+            self.params['classify_snapshot']
+        ))
+        net.load_state_dict(checkpoint['state_dict'])
+        net.cuda()
+        loss, iou = self.all_predict(net, run_type='testing', silent=False, save=True)
+        self.logger.info(
+            'testing: loss: {:.7f} iou: {:.5%}'.format(
+                loss, iou
+        ))

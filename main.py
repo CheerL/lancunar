@@ -4,12 +4,15 @@ import sys
 import numpy as np
 
 import data_manager
-from model import Model
+from model import Model, ModelWithSeg
 from config import model_params
 
 if __name__ == '__main__':
-    basePath = os.getcwd() # get current path
-    model = Model(model_params)
+    if '-seg' in sys.argv:
+        model = ModelWithSeg(model_params)
+    else:
+        model = Model(model_params)
+
     if '-train' in sys.argv:
         model.train() #train model
 
